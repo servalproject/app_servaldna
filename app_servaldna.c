@@ -37,7 +37,19 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision: XXX $")
 #include "asterisk/app.h"
 #include "asterisk/cli.h"
 
-static char app[] = "servaldna";
+static int	servaldna_exec(struct ast_channel *chan, const char *data);
+static char 	*servaldna_lookup(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
+static int	unload_module(void);
+static int	load_module(void);
+static void	servaldna_query(const char *did, char **reply);
+
+static char *instancepath = NULL;
+static char config_file[] = "servaldna.conf";
+static char app[] = "ServalDNA";
+static struct ast_cli_entry cli_servaldna[] = {
+    AST_CLI_DEFINE(servaldna_lookup,	"Lookup a number via Serval DNA"),
+};
+
 /*** DOCUMENTATION
 	<application name="servaldna" language="en_US">
 		<synopsis>
@@ -53,16 +65,38 @@ static char app[] = "servaldna";
  ***/
 static int
 servaldna_exec(struct ast_channel *chan, const char *data) {
-	ast_verbose("servaldna_exec called\n");
-	
-	return 0;
-}
+    char 	*reply, *argcopy;
+    
+    AST_DECLARE_APP_ARGS(arglist,
+			 AST_APP_ARG(did);
+	);
+    
+    ast_log(LOG_WARNING, "servaldna_exec called\n");
 
+    if (ast_strlen_zero(data)) {
+	ast_log(LOG_WARNING, "Argument required (number to lookup)\n");
+	return -1;
+    }
+
+    argcopy = ast_strdupa(data);
+
+    AST_STANDARD_APP_ARGS(arglist, argcopy);
+
+    servaldna_query(arglist.did, &reply);
+
+    if (reply == NULL)
+	return -1;
+    
+    pbx_builtin_setvar_helper(chan, "SDNA_DEST", reply);
+
+    free(reply);
+    return 0;
+}
 
 static char *
 servaldna_lookup(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a) {
-    ast_cli(a->fd, "servaldna_lookup called\n");
-    
+    char 	*reply;
+
     switch (cmd) {
         case CLI_INIT:
 	    e->command = "servaldna lookup";
@@ -73,18 +107,32 @@ servaldna_lookup(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a) {
         case CLI_GENERATE:
 	    return NULL;
     }
+    
+    if (a->argc != 3) {
+        ast_cli(a->fd, "You did not provide an argument to servaldna lookup\n\n");
+        return CLI_FAILURE;
+    }
+
+    servaldna_query(a->argv[2], &reply);
+
+    if (reply == NULL) {
+        ast_cli(a->fd, "Lookup failed\n");
+        return CLI_FAILURE;
+    }
+	
+    ast_cli(a->fd, "Lookup returned \'%s\'\n", reply);
 
     return CLI_SUCCESS;
 }
 
-static struct ast_cli_entry cli_servaldna[] = {
-    AST_CLI_DEFINE(servaldna_lookup,	"Lookup a number via Serval DNA"),
-};
-
 static int 
 unload_module(void) {
-    ast_verbose("Serval unload module called\n");
+    ast_log(LOG_WARNING, "Serval unload module called\n");
 
+    if (instancepath != NULL)
+	free(instancepath);
+    instancepath = NULL;
+    
     ast_cli_unregister_multiple(cli_servaldna, ARRAY_LEN(cli_servaldna));
     ast_unregister_application(app);
 
@@ -93,23 +141,48 @@ unload_module(void) {
 
 static int
 load_module(void) {
-    ast_verbose("Serval load module called\n");
+    struct ast_config *cfg;
+    struct ast_flags config_flags = { 0 ? CONFIG_FLAG_FILEUNCHANGED : 0 };
+    const char *tmp;
+    
+    ast_log(LOG_WARNING, "Serval load module called\n");
+    
+    if ((cfg = ast_config_load(config_file, config_flags)) == NULL) {
+	ast_log(LOG_WARNING, "Unable to load config file\n");
+	goto error;
+    }
+
+    if ((tmp = ast_variable_retrieve(cfg, "general", "instancepath")) == NULL) {
+	ast_log(LOG_WARNING, "Can't find required instancepath entry in general category\n");
+	goto error;
+    }
+    instancepath = strdup(tmp);
+    ast_log(LOG_WARNING, "Using instance path %s\n", instancepath);
     
     if (ast_register_application_xml(app, servaldna_exec)) {
-	ast_verbose("Unable to register function\n");
+	ast_log(LOG_WARNING, "Unable to register function\n");
 	goto error;
     }
     
     if (ast_cli_register_multiple(cli_servaldna, ARRAY_LEN(cli_servaldna))) {
-	ast_verbose("Unable to register CLI functions\n");
+	ast_log(LOG_WARNING, "Unable to register CLI functions\n");
 	goto error;
     }
     
     return 0;
 
   error:
+    ast_config_destroy(cfg);
     unload_module();
     return -1;
 }
+
+static void
+servaldna_query(const char *did, char **reply) {
+    ast_log(LOG_WARNING, "Query for \'%s\'\n", did);
     
+    *reply = strdup("foo");
+    ast_log(LOG_WARNING, "Returning \'%s\'\n", *reply);
+}
+
 AST_MODULE_INFO_STANDARD(ASTERISK_GPL_KEY, "Lookup numbers via Serval DNA");
