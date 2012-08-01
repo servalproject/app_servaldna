@@ -36,6 +36,7 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision: XXX $")
 #include "asterisk/utils.h"
 #include "asterisk/app.h"
 #include "asterisk/cli.h"
+#include "app.h"
 
 static int	servaldna_exec(struct ast_channel *chan, const char *data);
 static char 	*servaldna_lookup(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
@@ -126,7 +127,7 @@ servaldna_lookup(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a) {
 }
 
 static int 
-unload_module(void) {
+unregister_cli(void) {
     ast_log(LOG_WARNING, "Serval unload module called\n");
 
     if (instancepath != NULL)
@@ -139,13 +140,13 @@ unload_module(void) {
     return 0;
 }
 
-static int
-load_module(void) {
+int
+register_cli(void) {
     struct ast_config *cfg;
     struct ast_flags config_flags = { 0 ? CONFIG_FLAG_FILEUNCHANGED : 0 };
     const char *tmp;
     
-    ast_log(LOG_WARNING, "Serval load module called\n");
+    ast_log(LOG_WARNING, "Registering Serval CLI and dialplan functions\n");
     
     if ((cfg = ast_config_load(config_file, config_flags)) == NULL) {
 	ast_log(LOG_WARNING, "Unable to load config file\n");
@@ -177,9 +178,24 @@ load_module(void) {
     return -1;
 }
 
+static int
+load_module(void){
+    ast_log(LOG_WARNING, "Serval load module called\n");
+    
+    register_cli();
+    vomp_register_channel();
+    return 0;
+}
+
+static int 
+unload_module(void) {
+    unregister_cli();
+    return 0;
+}
+
 static void
 servaldna_query(const char *did, char **reply) {
-    ast_log(LOG_WARNING, "Query for \'%s\'\n", did);
+    ast_log(LOG_DEBUG, "Query for \'%s\'\n", did);
     
     *reply = strdup("foo");
     ast_log(LOG_WARNING, "Returning \'%s\'\n", *reply);

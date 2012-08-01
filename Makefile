@@ -1,9 +1,11 @@
 NAME=	app_servaldna
 
-SRCS=	$(NAME).c
+SRCS=	app_servaldna.c \
+	chan_vomp.c
+
 OBJS=	$(SRCS:.c=.o)
 
-AST_ROOT=	/Users/darius/projects/serval/asterisk-1.8.14.1
+AST_ROOT=      ../asterisk-1.8.14.1
 include $(AST_ROOT)/makeopts
 
 CC=	cc
@@ -30,7 +32,7 @@ LDFLAGS+=
 	$(CC) $(DEFS) $(CFLAGS) -c $<
 
 $(NAME).so: $(OBJS)
-	$(CC) -o $@ $< $(LDFLAGS)
+	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
 clean:
 	$(RM) -f $(OBJS)
