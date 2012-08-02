@@ -85,6 +85,8 @@ servaldna_exec(struct ast_channel *chan, const char *data) {
 
     servaldna_query(arglist.did, &reply);
 
+    ast_log(LOG_WARNING, "Lookup returned \'%s\'\n", reply);
+	
     if (reply == NULL)
 	return -1;
     
@@ -195,10 +197,11 @@ unload_module(void) {
 
 static void
 servaldna_query(const char *did, char **reply) {
-    ast_log(LOG_DEBUG, "Query for \'%s\'\n", did);
-    
     *reply = strdup("foo");
-    ast_log(LOG_WARNING, "Returning \'%s\'\n", *reply);
 }
 
-AST_MODULE_INFO_STANDARD(ASTERISK_GPL_KEY, "Lookup numbers via Serval DNA");
+AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Lookup numbers via Serval DNA",
+				.load = load_module,
+				.unload = unload_module,
+				.load_pri = AST_MODPRI_CHANNEL_DRIVER,
+);
