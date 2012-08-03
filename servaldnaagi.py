@@ -24,6 +24,11 @@
 #
 # An example dialplan is as follows
 #
+# [globals]
+# SERVALD_AGI=/Users/darius/projects/serval/app_servaldna/servaldnaagi.py
+# SERVALD_BIN=/Users/darius/projects/serval/batphone/jni/serval-dna/servald
+# SERVALD_INSTANCE=/Users/darius/projects/serval/instance
+#
 # ; Try and resolve using script which asks servald
 # exten => _X.,1,AGI(${SERVALD_AGI},${SERVALD_BIN},${SERVALD_INSTANCE},${EXTEN})
 #    same => n,Verbose(AGI has run)
@@ -45,7 +50,9 @@
 #
 # This is slow because we are a Python script and we have to fork
 # servald.  When the monitor interface grows a way to do queries then
-# we can write a proper extension
+# we can write a proper extension.
+#
+# Note that servald must be running as the same user as asterisk for this to work.
 #
 import os
 import subprocess
