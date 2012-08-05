@@ -110,8 +110,7 @@ def main():
     # Mangle
     method = uri[0:6].lower()
     if method == 'sip://':
-        debug("Don't know what to do with SIP URIs yet, got " + uri)
-        sys.exit(1)
+        varval = 'SIP/' + uri[6:].split(':')[0]
     elif method == 'sid://':
         varval = 'VOMP/' + uri[6:]
     else:
