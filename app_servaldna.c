@@ -37,6 +37,8 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision: XXX $")
 #include "asterisk/app.h"
 #include "asterisk/cli.h"
 #include "app.h"
+#include "log.h"
+#include "strbuf.h"
 
 static int	servaldna_exec(struct ast_channel *chan, const char *data);
 static char 	*servaldna_lookup(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
@@ -160,6 +162,8 @@ register_cli(void) {
 	goto error;
     }
     instancepath = strdup(tmp);
+    
+    setenv("SERVALINSTANCE_PATH", instancepath,1);
     ast_log(LOG_WARNING, "Using instance path %s\n", instancepath);
     
     if (ast_register_application_xml(app, servaldna_exec)) {
@@ -180,8 +184,14 @@ register_cli(void) {
     return -1;
 }
 
+void asterisk_log(int level, struct strbuf *buf){
+    ast_log(LOG_WARNING, "%s\n", strbuf_str(buf));
+    strbuf_reset(buf);
+}
+
 static int
 load_module(void){
+    set_log_implementation(asterisk_log);
     ast_log(LOG_WARNING, "Serval load module called\n");
     
     register_cli();

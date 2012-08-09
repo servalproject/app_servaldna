@@ -1,11 +1,25 @@
+AST_ROOT=	../asterisk-1.8.14.1
+SERVAL_ROOT=	../batphone/jni/serval-dna
+
 NAME=	app_servaldna
 
 SRCS=	app_servaldna.c \
 	chan_vomp.c
 
+HDRS=	app.h
+
 OBJS=	$(SRCS:.c=.o)
 
-AST_ROOT=      ../asterisk-1.8.14.1
+MONITORCLIENT= \
+	$(SERVAL_ROOT)/conf.o \
+        $(SERVAL_ROOT)/log.o \
+        $(SERVAL_ROOT)/mkdir.o \
+        $(SERVAL_ROOT)/monitor-client.o \
+        $(SERVAL_ROOT)/net.o \
+        $(SERVAL_ROOT)/str.o \
+        $(SERVAL_ROOT)/strbuf.o \
+        $(SERVAL_ROOT)/strbuf_helpers.o
+
 include $(AST_ROOT)/makeopts
 
 CC=	cc
@@ -25,10 +39,10 @@ else
   LDFLAGS+=-shared
 endif
 
-CFLAGS+=	-DAST_MODULE=\"$(NAME)\" -I$(AST_ROOT)/include -fPIC $(PTHREAD_CFLAGS) -Wall -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -g
-LDFLAGS+=
+CFLAGS+=	-DAST_MODULE=\"$(NAME)\" -I$(AST_ROOT)/include -I$(SERVAL_ROOT) -fPIC $(PTHREAD_CFLAGS) -Wall -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -g
+LDFLAGS+= $(MONITORCLIENT)
 
-%.o:	%.c
+%.o:	%.c $(HDRS)
 	$(CC) $(DEFS) $(CFLAGS) -c $<
 
 $(NAME).so: $(OBJS)

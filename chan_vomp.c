@@ -39,6 +39,8 @@
 #include <asterisk/ulaw.h>
 
 #include "app.h"
+#include "monitor-client.h"
+#include "constants.h"
 
 static struct ast_channel *vomp_request(const char *type, format_t format, const struct ast_channel *requestor, const char *dest, int *cause);
 static int vomp_call(struct ast_channel *ast, char *dest, int timeout);
@@ -48,12 +50,28 @@ static struct ast_frame *vomp_read(struct ast_channel *ast);
 static int vomp_write(struct ast_channel *ast, struct ast_frame *frame);
 static int vomp_indicate(struct ast_channel *ast, int ind, const void *data, size_t datalen);
 static int vomp_fixup(struct ast_channel *oldchan, struct ast_channel *newchan);
+static struct vomp_channel *get_channel(char *token);
+
+void send_hangup(int session_id);
+void send_ringing(struct vomp_channel *vomp_state);
+void send_pickup(struct vomp_channel *vomp_state);
+void send_call(const char *sid, const char *caller_id, const char *remote_ext);
+void send_audio(struct vomp_channel *vomp_state, unsigned char *buffer, int len, int codec);
+
+int remote_dialing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+int remote_pickup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+int remote_hangup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+int remote_audio(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+int remote_ringing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+int remote_keepalive(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 
 static const char desc[] = "Serval Vomp Channel Driver";
 static const char type[] = "VOMP";
 static const char tdesc[] = "Serval Vomp Channel Driver";
 
 AST_MUTEX_DEFINE_STATIC(vomplock); 
+int monitor_client_fd=-1;
 
 static const struct ast_channel_tech vomp_tech = {
 	.type         = type,
@@ -72,13 +90,26 @@ static const struct ast_channel_tech vomp_tech = {
 };
 
 struct vomp_channel {
-	int local_state;
-	int remote_state;
+	int session_id;
 	int chan_id;
-	char ext[32];
 	int channel_start;
 	int call_start;
+	int initiated;
 	struct ast_channel *owner;
+};
+
+// HACK, one active call at a time for now
+struct vomp_channel *active_call;
+struct vomp_channel *dialed_call;
+
+struct monitor_command_handler monitor_handlers[]={
+	{.command="CALLFROM",    .handler=remote_call},
+	{.command="RINGING",     .handler=remote_ringing},
+	{.command="ANSWERED",    .handler=remote_pickup},
+	{.command="CALLTO",      .handler=remote_dialing},
+	{.command="HANGUP",      .handler=remote_hangup},
+	{.command="AUDIOPACKET", .handler=remote_audio},
+	{.command="KEEPALIVE",   .handler=remote_keepalive},
 };
 
 int chan_id=0;
@@ -87,7 +118,7 @@ pthread_t thread;
 
 static struct ao2_container *channels;
 
-long long gettime_ms()
+static long long gettime_ms(void)
 {
 	struct timeval nowtv;
 	gettimeofday(&nowtv, NULL);
@@ -98,7 +129,7 @@ static void vomp_channel_destructor(void *obj){
 	// noop...
 }
 
-static struct vomp_channel *new_vomp_channel(){
+static struct vomp_channel *new_vomp_channel(void){
 	struct vomp_channel *vomp_state;
 	vomp_state = ao2_alloc(sizeof(struct vomp_channel), vomp_channel_destructor);
 	
@@ -107,25 +138,27 @@ static struct vomp_channel *new_vomp_channel(){
 	vomp_state->channel_start = gettime_ms();
 	
 	ao2_link(channels, vomp_state);
-	ao2_ref(vomp_state, -1);
 	
+	// HACK one active call
+	active_call = vomp_state;
 	return vomp_state;
 }
 
-static struct ast_channel *new_channel(struct vomp_channel *vomp_state, char *context, char *ext){
+static struct ast_channel *new_channel(struct vomp_channel *vomp_state, int state, char *context, char *ext){
 	struct ast_channel *ast;
 
+	ao2_lock(vomp_state);
+	
 	if (vomp_state->owner)
 		return vomp_state->owner;
 	
-	ao2_lock(vomp_state);
+	ast = ast_channel_alloc(1, state, NULL, NULL, NULL, ext, context, NULL, 0, "VoMP/%08x", vomp_state->chan_id);
 	
-	ast = ast_channel_alloc(1, AST_STATE_DOWN, NULL, NULL, NULL, context, ext, NULL, 0, "VoMP/%08x", vomp_state->chan_id);
-	
-	ast->nativeformats = AST_FORMAT_SLINEAR16;
-	ast->readformat = AST_FORMAT_SLINEAR16;
-	ast->writeformat = AST_FORMAT_SLINEAR16;
+	ast->nativeformats = AST_FORMAT_SLINEAR;
+	ast->readformat = AST_FORMAT_SLINEAR;
+	ast->writeformat = AST_FORMAT_SLINEAR;
 	ast->tech=&vomp_tech;
+	ao2_ref(vomp_state, 1);
 	ast->tech_pvt=vomp_state;
 	vomp_state->owner = ast;
 	
@@ -136,178 +169,211 @@ static struct ast_channel *new_channel(struct vomp_channel *vomp_state, char *co
 
 // functions for handling incoming vomp events
 
-
-// remote party would like to initiate a call to ext
-struct vomp_channel * remote_init(char *ext){
-	ast_log(LOG_WARNING, "remote_init\n");
-	// first, test the dial plan
-	if (ast_exists_extension(NULL, "s", ext, 1, NULL)) {
-		struct vomp_channel *vomp_state = new_vomp_channel();
-		strncpy(vomp_state->ext, ext, sizeof(vomp_state->ext));
-		return vomp_state;
-	}
+// find the channel struct from the servald token
+struct vomp_channel *get_channel(char *token){
+	// HACK only one active call for now
+	// TODO lookup using [channels]
+	if (!active_call)
+		return NULL;
+	int session_id=strtol(token, NULL, 16);
+	if (active_call->session_id==session_id)
+		return active_call;
 	return NULL;
 }
 
-// we can agree on codec's and we've both setup our call state
-// the remote party would like us to initiate the call now.
-void remote_ring(struct vomp_channel *vomp_state){
-	ast_log(LOG_WARNING, "remote_ring\n");
-	struct ast_channel *ast = new_channel(vomp_state, "s", vomp_state->ext);
-	// do we need to set the state to AST_STATE_RINGING now?
-	if (ast_pbx_start(ast)) {
-		ast_hangup(ast);
-	}
-	// we should be able to rely on asterisk to indicate success / failure through other methods.
+// Send outgoing monitor messages
+
+// TODO fix servald, currently case sensitive
+void send_hangup(int session_id){
+	monitor_client_writeline(monitor_client_fd, "hangup %06x\n",session_id);
+}
+void send_ringing(struct vomp_channel *vomp_state){
+	monitor_client_writeline(monitor_client_fd, "ringing %06x\n",vomp_state->session_id);
+}
+void send_pickup(struct vomp_channel *vomp_state){
+	monitor_client_writeline(monitor_client_fd, "pickup %06x\n",vomp_state->session_id);
+}
+void send_call(const char *sid, const char *caller_id, const char *remote_ext){
+	monitor_client_writeline(monitor_client_fd, "call %s %s %s\n", sid, caller_id, remote_ext);
+}
+void send_audio(struct vomp_channel *vomp_state, unsigned char *buffer, int len, int codec){
+	monitor_client_writeline_and_data(monitor_client_fd, buffer, len, "AUDIO %06x %d\n", vomp_state->session_id, codec);
 }
 
-void remote_pickup(struct vomp_channel *vomp_state){
-	if (!vomp_state->owner) return;
+// CALLTO [token] [localsid] [localdid] [remotesid] [remotedid]
+// sent so that we can link an outgoing call to a servald session id
+int remote_dialing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+	ast_log(LOG_WARNING, "remote_dialing\n");
+	if (!dialed_call)
+		return 0;
+	dialed_call->session_id=strtol(argv[0], NULL, 16);
+	dialed_call=NULL;
+	return 1;
+}
+
+// CALLFROM [token] [localsid] [localdid] [remotesid] [remotedid]
+int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+	char *ext = "100";//argv[2];
+	char *ctx="users";
+	ast_log(LOG_WARNING, "remote_call\n");
+	int session_id=strtol(argv[0], NULL, 16);
+	
+	if (ast_exists_extension(NULL, ctx, ext, 1, NULL)) {
+		struct vomp_channel *vomp_state=new_vomp_channel();
+		vomp_state->session_id=session_id;
+		vomp_state->initiated=0;
+		
+		struct ast_channel *ast = new_channel(vomp_state, AST_STATE_RINGING, ctx, ext);
+		ast_log(LOG_WARNING, "Handing call %s@%s over to pbx_start\n", ext, ctx);
+		if (ast_pbx_start(ast)) {
+			ast->hangupcause = AST_CAUSE_SWITCH_CONGESTION;
+			ast_log(LOG_WARNING, "pbx_start failed, hanging up\n");
+			ast_hangup(ast);
+			return 0;
+		}
+		return 1;
+	}
+	send_hangup(session_id);
+	return 0;
+}
+
+int remote_pickup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
 	ast_log(LOG_WARNING, "remote_pickup\n");
+	struct vomp_channel *vomp_state=get_channel(argv[0]);
+	if (!vomp_state || !vomp_state->owner) return 0;
 	
 	ast_indicate(vomp_state->owner, -1);
 	ast_queue_control(vomp_state->owner, AST_CONTROL_ANSWER);
+	return 1;
 }
 
-void remote_hangup(struct vomp_channel *vomp_state){
-	if (!vomp_state->owner) return;
+int remote_hangup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
 	ast_log(LOG_WARNING, "remote_hangup\n");
+	struct vomp_channel *vomp_state=get_channel(argv[0]);
+	if (!vomp_state || !vomp_state->owner) return 0;
 	ast_queue_hangup(vomp_state->owner);
+	return 1;
 }
 
-void remote_audio(struct vomp_channel *vomp_state, char *buff, int len){
+int remote_audio(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+	struct vomp_channel *vomp_state=get_channel(argv[0]);
+	if (!vomp_state || !vomp_state->owner) return 0;
+	
 	// currently assumes 16bit pcm
-	if (!vomp_state->owner) return;
-	ast_log(LOG_WARNING, "remote_audio\n");
 	struct ast_frame f = {
 		.frametype = AST_FRAME_VOICE,
-		.subclass.codec = AST_FORMAT_SLINEAR16,
+		.subclass.codec = AST_FORMAT_SLINEAR,
 		.src = "vomp_call",
-		.data.ptr = buff,
-		.datalen = len,
-		.samples = len / sizeof(int16_t),
+		.data.ptr = data,
+		.datalen = dataLen,
+		.samples = dataLen / sizeof(int16_t),
 	};
 	ast_queue_frame(vomp_state->owner, &f);
+	return 1;
 }
 
 // remote party has started ringing
-void remote_ringing(struct vomp_channel *vomp_state){
-	if (!vomp_state->owner) return;
+int remote_ringing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
 	ast_log(LOG_WARNING, "remote_ringing\n");
+	struct vomp_channel *vomp_state=get_channel(argv[0]);
+	if (!vomp_state || !vomp_state->owner) return 0;
 	ast_indicate(vomp_state->owner, AST_CONTROL_RINGING);
 	ast_queue_control(vomp_state->owner, AST_CONTROL_RINGING);
+	return 1;
+}
+
+int remote_keepalive(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+	// NOOP for now, just to eliminate unnecessary log spam
+	return 1;
 }
 
 
-
+// create a monitor client and read incoming messages
 static void *vomp_monitor(void *ignored){
-	struct ao2_iterator i;
-	struct vomp_channel *vomp_state;
+	struct monitor_state *state;
+	
+	// TODO, start servald and retry on error
+	
+	ast_log(LOG_WARNING, "opening monitor connection\n");
+	monitor_client_fd = monitor_client_open(&state);
+	if (monitor_client_fd<0){
+		ast_log(LOG_ERROR, "Failed to open monitor connection, start servald and restart asterisk\n");
+		return NULL;
+	}
+		
+	ast_log(LOG_WARNING, "sending monitor vomp command\n");
+	monitor_client_writeline(monitor_client_fd, "MONITOR VOMP\n");
+	ast_log(LOG_WARNING, "reading monitor events\n");
 	for(;;){
 		pthread_testcancel();
-		// TODO read monitor socket and process events
-		
-		// for now, just simulate call life cycle with audio echo
-		i = ao2_iterator_init(channels, 0);
-		while ((vomp_state = ao2_iterator_next(&i))) {
-			ao2_lock(vomp_state);
-			
-			int now = gettime_ms();
-			int age = now - vomp_state->channel_start;
-			
-			if (vomp_state->owner){
-				
-				switch(vomp_state->local_state){
-					case 0:
-						if (age > 500){
-							ast_log(LOG_WARNING, "Simulating remote ring on channel %s\n", vomp_state->owner->name);
-							
-							vomp_state->local_state=1;
-							remote_ringing(vomp_state);
-						}
-						break;
-					case 1:
-						if (age > 3000){
-							ast_log(LOG_WARNING, "Simulating remote pickup on channel %s\n", vomp_state->owner->name);
-							
-							vomp_state->local_state=2;
-							remote_pickup(vomp_state);
-						}
-						break;
-					case 2:
-						if (age > 10000){
-							ast_log(LOG_WARNING, "Simulating remote hangup on channel %s\n", vomp_state->owner->name);
-							
-							vomp_state->local_state=3;
-							remote_hangup(vomp_state);
-						}
-						break;
-				}
-				
-				
-			}
-			ao2_unlock(vomp_state);
+		if (monitor_client_read(monitor_client_fd, state, monitor_handlers, 
+					sizeof(monitor_handlers)/sizeof(struct monitor_command_handler))<0){
+			break;
 		}
-		ao2_iterator_destroy(&i);
-		pthread_testcancel();
-		sleep(1);
 	}
+	monitor_client_close(monitor_client_fd, state);
+	monitor_client_fd=-1;
 	return NULL;
 }
-
 
 
 
 // functions for handling incoming asterisk events
 
 // create a channel for a new outgoing call
-static struct ast_channel *vomp_request(const char *type, format_t format, const struct ast_channel *requestor, const char *dest, int *cause)
-{
+static struct ast_channel *vomp_request(const char *type, format_t format, const struct ast_channel *requestor, const char *dest, int *cause){
 	// Note, dest could indicate some config or something, for now we don't care.
 	
 	ast_log(LOG_WARNING, "vomp_request %s/%s\n", type, dest);
 	struct vomp_channel *vomp_state=new_vomp_channel();
-	return new_channel(vomp_state, NULL, NULL);
+	
+	vomp_state->initiated=1;
+	struct ast_channel *ast = new_channel(vomp_state, AST_STATE_DOWN, NULL, NULL);
+	
+	dialed_call = vomp_state;
+	// TODO caller id and parse destination extension
+	send_call(dest,"1","1");
+	
+	return ast;
 }
 
-static int vomp_hangup(struct ast_channel *ast)
-{
+static int vomp_hangup(struct ast_channel *ast){
 	ast_log(LOG_WARNING, "vomp_hangup %s\n", ast->name);
 	
-	// TODO local_state --> CallEnded
 	struct vomp_channel *vomp_state = (struct vomp_channel *)ast->tech_pvt;
 	
-	ao2_ref(vomp_state,-1);
+	// HACK one active call
+	active_call = NULL;
+  
+	send_hangup(vomp_state->session_id);
 	ao2_unlink(channels, vomp_state);
+	ao2_ref(vomp_state,-1);
 	ast->tech_pvt = NULL;
 	return 0;
 }
 
-static int vomp_fixup(struct ast_channel *oldchan, struct ast_channel *newchan)
-{
-	struct vomp_channel *p = newchan->tech_pvt;
+static int vomp_fixup(struct ast_channel *oldchan, struct ast_channel *newchan){
+	struct vomp_channel *vomp_state = newchan->tech_pvt;
 	ast_log(LOG_WARNING, "vomp_fixup %s %s\n", oldchan->name, newchan->name);
-	p->owner = newchan;
+	vomp_state->owner = newchan;
 	return 0;
 }
 
-static int vomp_indicate(struct ast_channel *ast, int ind, const void *data, size_t datalen)
-{
+static int vomp_indicate(struct ast_channel *ast, int ind, const void *data, size_t datalen){
 	ast_log(LOG_WARNING, "vomp_indicate %d condition on channel %s\n", 
 			ind, ast->name);
-	
-	
 	// return -1 and asterisk will generate audible tones.
 	
+	struct vomp_channel *vomp_state = ast->tech_pvt;
 	switch(ind){
 		case AST_CONTROL_RINGING:
-			// TODO local_state --> RingingIn
-			
+			if (!vomp_state->initiated)
+				send_ringing(vomp_state);
 			break;
 			
 		case AST_CONTROL_BUSY:
 		case AST_CONTROL_CONGESTION:
-			// TODO hangup
+			send_hangup(vomp_state->session_id);
 			break;
 			
 		default:
@@ -316,32 +382,27 @@ static int vomp_indicate(struct ast_channel *ast, int ind, const void *data, siz
 	return 0;
 }
 
-static int vomp_call(struct ast_channel *ast, char *dest, int timeout)
-{
-	// place a call to dest, expect format "sid:[sid]/[did]"
+static int vomp_call(struct ast_channel *ast, char *dest, int timeout){
+	// NOOP, as we have already started the call in vomp_request
 	ast_log(LOG_WARNING, "vomp_call %s %s\n", ast->name, dest);
-	
-	// TODO send out call request
-	
 	
 	return 0;
 }
 
-static int vomp_answer(struct ast_channel *ast)
-{
+static int vomp_answer(struct ast_channel *ast){
 	ast_log(LOG_WARNING, "vomp_answer %s\n", ast->name);
 	
 	struct vomp_channel *vomp_state = ast->tech_pvt;
 	
 	vomp_state->call_start = gettime_ms();
 	ast_setstate(ast, AST_STATE_UP);
+	send_pickup(vomp_state);
 	// TODO local_state --> InCall
 	
 	return 0;
 }
 
-static struct ast_frame *vomp_read(struct ast_channel *ast)
-{
+static struct ast_frame *vomp_read(struct ast_channel *ast){
 	// this method should only be called if we told asterisk to monitor a file for us.
 	
 	ast_log(LOG_WARNING, "vomp_read %s - this shouldn't happen\n", ast->name);
@@ -349,17 +410,10 @@ static struct ast_frame *vomp_read(struct ast_channel *ast)
 	return &ast_null_frame;
 }
 
-static int vomp_write(struct ast_channel *ast, struct ast_frame *frame)
-{
-	ast_log(LOG_WARNING, "vomp_write %s\n", ast->name);
-	
+static int vomp_write(struct ast_channel *ast, struct ast_frame *frame){
 	if (frame->frametype == AST_FRAME_VOICE){
 		struct vomp_channel *vomp_state = ast->tech_pvt;
-		// echo test;
-		remote_audio(vomp_state, frame->data.ptr, frame->samples*sizeof(int16_t));
-		
-		// TODO send audio
-		// frame->data.ptr, frame->samples		
+		send_audio(vomp_state, frame->data.ptr, frame->samples*2, VOMP_CODEC_PCM);
 	}
 	
 	return 0;
@@ -369,7 +423,6 @@ static int vomp_write(struct ast_channel *ast, struct ast_frame *frame)
 
 static int vomp_hash(const void *obj, const int flags){
 	const struct vomp_channel *vomp_state = obj;
-	// TODO return sid?
 	return vomp_state->chan_id;
 }
 
@@ -379,9 +432,8 @@ static int vomp_compare(void *obj, void *arg, int flags){
 	return obj1->chan_id==obj2->chan_id ? CMP_MATCH | CMP_STOP : 0;
 }
 
-int vomp_register_channel(void)
-{
-    ast_log(LOG_WARNING, "Registering Serval channel driver\n");
+int vomp_register_channel(void){
+	ast_log(LOG_WARNING, "Registering Serval channel driver\n");
 	
 	if (ast_channel_register(&vomp_tech)) {
 		ast_log(LOG_ERROR, "Unable to register channel class %s\n", type);
@@ -393,12 +445,12 @@ int vomp_register_channel(void)
 	if (ast_pthread_create_background(&thread, NULL, vomp_monitor, NULL)) {
 	}
 	
-    ast_log(LOG_WARNING, "Done\n");
+	ast_log(LOG_WARNING, "Done\n");
 	return 0;
 }
 
 int vomp_unregister_channel(void){
-    ast_log(LOG_WARNING, "Unregistering Serval channel driver\n");
+	ast_log(LOG_WARNING, "Unregistering Serval channel driver\n");
 	
 	pthread_cancel(thread);
 	pthread_kill(thread, SIGURG);
@@ -407,6 +459,7 @@ int vomp_unregister_channel(void){
 	ast_channel_unregister(&vomp_tech);
 	ao2_ref(channels, -1);
 	
-    ast_log(LOG_WARNING, "Done\n");
+	ast_log(LOG_WARNING, "Done\n");
 	return 0;
 }
+
