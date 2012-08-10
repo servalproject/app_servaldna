@@ -45,6 +45,7 @@ static char 	*servaldna_lookup(struct ast_cli_entry *e, int cmd, struct ast_cli_
 static int	unload_module(void);
 static int	load_module(void);
 static void	servaldna_query(const char *did, char **reply);
+static void	asterisk_log(int level, struct strbuf *buf);
 
 static char *instancepath = NULL;
 static char config_file[] = "servaldna.conf";
@@ -184,7 +185,8 @@ register_cli(void) {
     return -1;
 }
 
-void asterisk_log(int level, struct strbuf *buf){
+static void
+asterisk_log(int level, struct strbuf *buf) {
     ast_log(LOG_WARNING, "%s\n", strbuf_str(buf));
     strbuf_reset(buf);
 }

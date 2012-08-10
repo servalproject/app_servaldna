@@ -42,7 +42,7 @@
 #include "monitor-client.h"
 #include "constants.h"
 
-static struct ast_channel *vomp_request(const char *type, format_t format, const struct ast_channel *requestor, const char *dest, int *cause);
+static struct ast_channel  *vomp_request(const char *type, format_t format, const struct ast_channel *requestor, void *dest, int *cause);
 static int vomp_call(struct ast_channel *ast, char *dest, int timeout);
 static int vomp_hangup(struct ast_channel *ast);
 static int vomp_answer(struct ast_channel *ast);
@@ -52,19 +52,19 @@ static int vomp_indicate(struct ast_channel *ast, int ind, const void *data, siz
 static int vomp_fixup(struct ast_channel *oldchan, struct ast_channel *newchan);
 static struct vomp_channel *get_channel(char *token);
 
-void send_hangup(int session_id);
-void send_ringing(struct vomp_channel *vomp_state);
-void send_pickup(struct vomp_channel *vomp_state);
-void send_call(const char *sid, const char *caller_id, const char *remote_ext);
-void send_audio(struct vomp_channel *vomp_state, unsigned char *buffer, int len, int codec);
+static void send_hangup(int session_id);
+static void send_ringing(struct vomp_channel *vomp_state);
+static void send_pickup(struct vomp_channel *vomp_state);
+static void send_call(const char *sid, const char *caller_id, const char *remote_ext);
+static void send_audio(struct vomp_channel *vomp_state, unsigned char *buffer, int len, int codec);
 
-int remote_dialing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
-int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
-int remote_pickup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
-int remote_hangup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
-int remote_audio(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
-int remote_ringing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
-int remote_noop(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+static int remote_dialing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+static int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+static int remote_pickup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+static int remote_hangup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+static int remote_audio(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+static int remote_ringing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+static int remote_noop(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 
 static const char desc[] = "Serval Vomp Channel Driver";
 static const char type[] = "VOMP";
@@ -355,10 +355,10 @@ static void *vomp_monitor(void *ignored){
 // functions for handling incoming asterisk events
 
 // create a channel for a new outgoing call
-static struct ast_channel *vomp_request(const char *type, format_t format, const struct ast_channel *requestor, const char *dest, int *cause){
+static struct ast_channel *vomp_request(const char *type, format_t format, const struct ast_channel *requestor, void *dest_, int *cause){
 	// assume dest = servald subscriber id (sid)
 	// TODO parse dest = sid/did
-	char sid[64];
+	char sid[64], *dest = dest_;
 	int i;
 	for (i=0;i<sizeof(sid) && dest[i] && dest[i]!='/';i++){
 		sid[i]=dest[i];
@@ -497,4 +497,11 @@ int vomp_unregister_channel(void){
 	ast_log(LOG_WARNING, "Done\n");
 	return 0;
 }
+
+
+/*
+ * Local variables:
+ * c-basic-offset: 8
+ * End:
+ */
 
