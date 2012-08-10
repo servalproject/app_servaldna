@@ -90,7 +90,7 @@ def main():
     did = vars['agi_arg_3']
 
     os.environ['SERVALINSTANCE_PATH'] = instancedir
-    servaldproc = subprocess.Popen([binpath, 'dna', 'lookup', did], stdout = subprocess.PIPE)
+    servaldproc = subprocess.Popen([binpath, 'dna', 'lookup', did, '-3000'], stdout = subprocess.PIPE)
     servaldres = servaldproc.wait()
     (servaldout, servalderr) = servaldproc.communicate()
     if servaldres != 0:

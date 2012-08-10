@@ -58,6 +58,7 @@ static void send_ringing(struct vomp_channel *vomp_state);
 static void send_pickup(struct vomp_channel *vomp_state);
 static void send_call(const char *sid, const char *caller_id, const char *remote_ext);
 static void send_audio(struct vomp_channel *vomp_state, unsigned char *buffer, int len, int codec);
+static void send_lookup_response(const char *sid, const char *port, const char *ext, const char *name);
 
 static int remote_dialing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 static int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
@@ -66,10 +67,12 @@ static int remote_hangup(char *cmd, int argc, char **argv, unsigned char *data, 
 static int remote_audio(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 static int remote_ringing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 static int remote_noop(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+static int remote_lookup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 
 static const char desc[] = "Serval Vomp Channel Driver";
 static const char type[] = "VOMP";
 static const char tdesc[] = "Serval Vomp Channel Driver";
+static const char ctx[] = "servald-in";
 
 AST_MUTEX_DEFINE_STATIC(vomplock); 
 int monitor_client_fd=-1;
@@ -108,6 +111,7 @@ struct monitor_command_handler monitor_handlers[]={
 	{.command="CALLTO",        .handler=remote_dialing},
 	{.command="HANGUP",        .handler=remote_hangup},
 	{.command="AUDIOPACKET",   .handler=remote_audio},
+	{.command="LOOKUP",        .handler=remote_lookup},
 	{.command="KEEPALIVE",     .handler=remote_noop},
 	{.command="CALLSTATUS",    .handler=remote_noop},
 	{.command="MONITORSTATUS", .handler=remote_noop},
@@ -148,7 +152,7 @@ static void set_session_id(struct vomp_channel *vomp_state, int session_id){
 	ao2_link(channels, vomp_state);
 }
 
-static struct ast_channel *new_channel(struct vomp_channel *vomp_state, int state, char *context, char *ext){
+static struct ast_channel *new_channel(struct vomp_channel *vomp_state, const int state, const char *context, const char *ext){
 	struct ast_channel *ast;
 
 	ao2_lock(vomp_state);
@@ -203,6 +207,10 @@ void send_call(const char *sid, const char *caller_id, const char *remote_ext){
 void send_audio(struct vomp_channel *vomp_state, unsigned char *buffer, int len, int codec){
 	monitor_client_writeline_and_data(monitor_client_fd, buffer, len, "AUDIO %06x %d\n", vomp_state->session_id, codec);
 }
+static void send_lookup_response(const char *sid, const char *port, const char *ext, const char *name){
+	ast_log(LOG_WARNING, "lookup match %s %s %s %s\n", sid, port, ext, name);
+	monitor_client_writeline(monitor_client_fd, "lookup match %s %s %s %s\n", sid, port, ext, name);
+}
 
 // CALLTO [token] [localsid] [localdid] [remotesid] [remotedid]
 // sent so that we can link an outgoing call to a servald session id
@@ -220,8 +228,7 @@ int remote_dialing(char *cmd, int argc, char **argv, unsigned char *data, int da
 int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
 	// TODO fix servald and other VOMP clients to pass extension correctly
 	// TODO add callerid...
-	char *ext = "100";//argv[2];
-	char *ctx="servald-in";
+	char *ext = "10000";//argv[2];
 	ast_log(LOG_WARNING, "remote_call\n");
 	int session_id=strtol(argv[0], NULL, 16);
 	
@@ -242,6 +249,17 @@ int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataL
 	}
 	send_hangup(session_id);
 	return 0;
+}
+
+static int remote_lookup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+	char *sid = argv[0];
+	char *port = argv[1];
+	char *ext = argv[2];
+	ast_log(LOG_WARNING, "remote_lookup %s, %s, %s\n", sid, port, ext);
+	if (ast_exists_extension(NULL, ctx, ext, 1, NULL)) {
+		send_lookup_response(sid, port, ext, "");
+	}
+	return 1;
 }
 
 int remote_pickup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
@@ -338,6 +356,7 @@ static void *vomp_monitor(void *ignored){
 		
 	ast_log(LOG_WARNING, "sending monitor vomp command\n");
 	monitor_client_writeline(monitor_client_fd, "MONITOR VOMP\n");
+	monitor_client_writeline(monitor_client_fd, "MONITOR DNAHELPER\n");
 	ast_log(LOG_WARNING, "reading monitor events\n");
 	for(;;){
 		pthread_testcancel();
