@@ -72,7 +72,7 @@ static int remote_lookup(char *cmd, int argc, char **argv, unsigned char *data, 
 static const char desc[] = "Serval Vomp Channel Driver";
 static const char type[] = "VOMP";
 static const char tdesc[] = "Serval Vomp Channel Driver";
-static const char ctx[] = "servald-in";
+char *incoming_context = "servald-in";
 
 AST_MUTEX_DEFINE_STATIC(vomplock); 
 int monitor_client_fd=-1;
@@ -232,13 +232,13 @@ int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataL
 	ast_log(LOG_WARNING, "remote_call\n");
 	int session_id=strtol(argv[0], NULL, 16);
 	
-	if (ast_exists_extension(NULL, ctx, ext, 1, NULL)) {
+	if (ast_exists_extension(NULL, incoming_context, ext, 1, NULL)) {
 		struct vomp_channel *vomp_state=new_vomp_channel();
 		set_session_id(vomp_state, session_id);
 		vomp_state->initiated=0;
 		
-		struct ast_channel *ast = new_channel(vomp_state, AST_STATE_RINGING, ctx, ext);
-		ast_log(LOG_WARNING, "Handing call %s@%s over to pbx_start\n", ext, ctx);
+		struct ast_channel *ast = new_channel(vomp_state, AST_STATE_RINGING, incoming_context, ext);
+		ast_log(LOG_WARNING, "Handing call %s@%s over to pbx_start\n", ext, incoming_context);
 		if (ast_pbx_start(ast)) {
 			ast->hangupcause = AST_CAUSE_SWITCH_CONGESTION;
 			ast_log(LOG_WARNING, "pbx_start failed, hanging up\n");
@@ -256,7 +256,7 @@ static int remote_lookup(char *cmd, int argc, char **argv, unsigned char *data, 
 	char *port = argv[1];
 	char *ext = argv[2];
 	ast_log(LOG_WARNING, "remote_lookup %s, %s, %s\n", sid, port, ext);
-	if (ast_exists_extension(NULL, ctx, ext, 1, NULL)) {
+	if (ast_exists_extension(NULL, incoming_context, ext, 1, NULL)) {
 		send_lookup_response(sid, port, ext, "");
 	}
 	return 1;

@@ -160,6 +160,11 @@ register_cli(void) {
 	goto error;
     }
     instancepath = strdup(tmp);
+	
+    if ((tmp = ast_variable_retrieve(cfg, "general", "incoming_context")) != NULL) {
+	incoming_context = strdup(tmp);
+    }
+    
     
     setenv("SERVALINSTANCE_PATH", instancepath,1);
     ast_log(LOG_WARNING, "Using instance path %s\n", instancepath);

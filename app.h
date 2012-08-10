@@ -13,4 +13,6 @@ int vomp_register_channel(void);
 int vomp_unregister_channel(void);
 int register_cli(void);
 
+extern char *incoming_context;
+
 #endif
