@@ -100,7 +100,11 @@ def main():
     lines = servaldout.split('\n')
 
     # Grab first URI
-    uri = lines[0]
+    line = lines[0]
+    # It is the first field, second is DID, third is name
+    # XXX: servald uses : for the field separator but does not escape it inside a field (this should be fixed).
+    # For now kludge around it
+    uri = line[0:6] + line[6:].split(':')[0]
     debug("Looking at " + uri)
     
     if uri == '':
@@ -110,7 +114,7 @@ def main():
     # Mangle
     method = uri[0:6].lower()
     if method == 'sip://':
-        varval = 'SIP/' + uri[6:].split(':')[0]
+        varval = 'SIP/' + uri[6:]
     elif method == 'sid://':
         varval = 'VOMP/' + uri[6:]
     else:
