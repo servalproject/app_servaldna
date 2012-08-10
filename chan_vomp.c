@@ -345,28 +345,33 @@ int remote_noop(char *cmd, int argc, char **argv, unsigned char *data, int dataL
 static void *vomp_monitor(void *ignored){
 	struct monitor_state *state;
 	
-	// TODO, start servald and retry on error
-	
-	ast_log(LOG_WARNING, "opening monitor connection\n");
-	monitor_client_fd = monitor_client_open(&state);
-	if (monitor_client_fd<0){
-		ast_log(LOG_ERROR, "Failed to open monitor connection, start servald and restart asterisk\n");
-		return NULL;
-	}
-		
-	ast_log(LOG_WARNING, "sending monitor vomp command\n");
-	monitor_client_writeline(monitor_client_fd, "MONITOR VOMP\n");
-	monitor_client_writeline(monitor_client_fd, "MONITOR DNAHELPER\n");
-	ast_log(LOG_WARNING, "reading monitor events\n");
-	for(;;){
+	while (1){
 		pthread_testcancel();
-		if (monitor_client_read(monitor_client_fd, state, monitor_handlers, 
-					sizeof(monitor_handlers)/sizeof(struct monitor_command_handler))<0){
-			break;
+		ast_log(LOG_WARNING, "opening monitor connection\n");
+		monitor_client_fd = monitor_client_open(&state);
+		
+		if (monitor_client_fd<0){
+			ast_log(LOG_ERROR, "Failed to open monitor connection, please start servald\n");
+			sleep(10);
+			continue;
 		}
+			
+		ast_log(LOG_WARNING, "sending monitor vomp command\n");
+		monitor_client_writeline(monitor_client_fd, "MONITOR VOMP\n");
+		monitor_client_writeline(monitor_client_fd, "MONITOR DNAHELPER\n");
+		ast_log(LOG_WARNING, "reading monitor events\n");
+		for(;;){
+			pthread_testcancel();
+			if (monitor_client_read(monitor_client_fd, state, monitor_handlers, 
+						sizeof(monitor_handlers)/sizeof(struct monitor_command_handler))<0){
+				break;
+			}
+		}
+		ast_log(LOG_WARNING, "closing monitor connection\n");
+		monitor_client_close(monitor_client_fd, state);
+		monitor_client_fd=-1;
+		sleep(1);
 	}
-	monitor_client_close(monitor_client_fd, state);
-	monitor_client_fd=-1;
 	return NULL;
 }
 
