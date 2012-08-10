@@ -31,6 +31,7 @@ endif
 
 CFLAGS+=	-DAST_MODULE=\"$(NAME)\" -I$(AST_ROOT)/include -I$(SERVAL_ROOT) -fPIC $(PTHREAD_CFLAGS)
 CFLAGS+=	-Wall -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -g
+# Work around AST_INLINE_API weirdness on OSX 10.8
 CFLAGS+=	-DLOW_MEMORY
 LDFLAGS+=	$(SERVAL_ROOT)/libmonitorclient.a
 
@@ -41,5 +42,6 @@ $(NAME).so: $(OBJS)
 	$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
 clean:
-	$(RM) -f $(OBJS)
+	$(RM) -f $(OBJS) $(NAME).so
+
 
