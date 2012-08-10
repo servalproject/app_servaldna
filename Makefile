@@ -10,16 +10,6 @@ HDRS=	app.h
 
 OBJS=	$(SRCS:.c=.o)
 
-MONITORCLIENT= \
-	$(SERVAL_ROOT)/conf.o \
-        $(SERVAL_ROOT)/log.o \
-        $(SERVAL_ROOT)/mkdir.o \
-        $(SERVAL_ROOT)/monitor-client.o \
-        $(SERVAL_ROOT)/net.o \
-        $(SERVAL_ROOT)/str.o \
-        $(SERVAL_ROOT)/strbuf.o \
-        $(SERVAL_ROOT)/strbuf_helpers.o
-
 include $(AST_ROOT)/makeopts
 
 CC=	cc
@@ -40,7 +30,7 @@ else
 endif
 
 CFLAGS+=	-DAST_MODULE=\"$(NAME)\" -I$(AST_ROOT)/include -I$(SERVAL_ROOT) -fPIC $(PTHREAD_CFLAGS) -Wall -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -g
-LDFLAGS+= $(MONITORCLIENT)
+LDFLAGS+= $(SERVAL_ROOT)/libmonitorclient.a
 
 %.o:	%.c $(HDRS)
 	$(CC) $(DEFS) $(CFLAGS) -c $<
