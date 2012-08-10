@@ -220,7 +220,7 @@ int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataL
 	// TODO fix servald and other VOMP clients to pass extension correctly
 	// TODO add callerid...
 	char *ext = "100";//argv[2];
-	char *ctx="users";
+	char *ctx="servald-in";
 	ast_log(LOG_WARNING, "remote_call\n");
 	int session_id=strtol(argv[0], NULL, 16);
 	
@@ -358,15 +358,21 @@ static void *vomp_monitor(void *ignored){
 static struct ast_channel *vomp_request(const char *type, format_t format, const struct ast_channel *requestor, const char *dest, int *cause){
 	// assume dest = servald subscriber id (sid)
 	// TODO parse dest = sid/did
-	ast_log(LOG_WARNING, "vomp_request %s/%s\n", type, dest);
+	char sid[64];
+	int i;
+	for (i=0;i<sizeof(sid) && dest[i] && dest[i]!='/';i++){
+		sid[i]=dest[i];
+	}
+	sid[i]=0;
+	ast_log(LOG_WARNING, "vomp_request %s/%s\n", type, sid);
 	struct vomp_channel *vomp_state=new_vomp_channel();
 	
 	vomp_state->initiated=1;
 	struct ast_channel *ast = new_channel(vomp_state, AST_STATE_DOWN, NULL, NULL);
 	
 	dialed_call = vomp_state;
-	// TODO caller id and parse destination extension
-	send_call(dest,"1","1");
+	
+	send_call(sid,"1","1");
 	
 	return ast;
 }
