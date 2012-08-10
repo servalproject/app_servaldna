@@ -29,9 +29,10 @@ else
   LDFLAGS+=-shared
 endif
 
-CFLAGS+=	-DAST_MODULE=\"$(NAME)\" -I$(AST_ROOT)/include -I$(SERVAL_ROOT) -fPIC $(PTHREAD_CFLAGS) -Wall -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -g
+CFLAGS+=	-DAST_MODULE=\"$(NAME)\" -I$(AST_ROOT)/include -I$(SERVAL_ROOT) -fPIC $(PTHREAD_CFLAGS)
+CFLAGS+=	-Wall -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -g
 CFLAGS+=	-DLOW_MEMORY
-LDFLAGS+= $(SERVAL_ROOT)/libmonitorclient.a
+LDFLAGS+=	$(SERVAL_ROOT)/libmonitorclient.a
 
 %.o:	%.c $(HDRS)
 	$(CC) $(DEFS) $(CFLAGS) -c $<
