@@ -228,8 +228,8 @@ int remote_dialing(char *cmd, int argc, char **argv, unsigned char *data, int da
 int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
 	// TODO fix servald and other VOMP clients to pass extension correctly
 	// TODO add callerid...
-	char *ext = "10000";//argv[2];
-	ast_log(LOG_WARNING, "remote_call\n");
+	char *ext = argv[2];
+	ast_log(LOG_WARNING, "remote_call for \"%s\"\n", argv[2]);
 	int session_id=strtol(argv[0], NULL, 16);
 	
 	if (ast_exists_extension(NULL, incoming_context, ext, 1, NULL)) {
@@ -471,10 +471,8 @@ static struct ast_frame *vomp_read(struct ast_channel *ast){
 }
 
 static int vomp_write(struct ast_channel *ast, struct ast_frame *frame){
-	if (frame->frametype == AST_FRAME_VOICE){
-		struct vomp_channel *vomp_state = ast->tech_pvt;
-		send_audio(vomp_state, frame->data.ptr, frame->samples*2, VOMP_CODEC_PCM);
-	}
+	struct vomp_channel *vomp_state = ast->tech_pvt;
+	send_audio(vomp_state, frame->data.ptr, frame->samples*2, VOMP_CODEC_PCM);
 	
 	return 0;
 }
