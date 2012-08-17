@@ -511,7 +511,9 @@ int vomp_unregister_channel(void){
 	ast_log(LOG_WARNING, "Unregistering Serval channel driver\n");
 	
 	pthread_cancel(thread);
+#ifdef SIGURG
 	pthread_kill(thread, SIGURG);
+#endif
 	pthread_join(thread, NULL);
 	
 	ast_channel_unregister(&vomp_tech);

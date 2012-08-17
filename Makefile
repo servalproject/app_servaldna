@@ -29,6 +29,9 @@ else
   LDFLAGS+=-shared
 endif
 
+# So we get PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP on Ubuntu
+CFLAGS+=-DPTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP
+
 CFLAGS+=	-DAST_MODULE=\"$(NAME)\" -I$(AST_ROOT)/include -I$(SERVAL_ROOT) -fPIC $(PTHREAD_CFLAGS)
 CFLAGS+=	-Wall -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -g
 # Work around AST_INLINE_API weirdness on OSX 10.8
