@@ -76,6 +76,7 @@ char *incoming_context = "servald-in";
 
 AST_MUTEX_DEFINE_STATIC(vomplock); 
 int monitor_client_fd=-1;
+int monitor_resolve_numbers;
 
 static const struct ast_channel_tech vomp_tech = {
 	.type         = type,
@@ -252,12 +253,14 @@ int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataL
 }
 
 static int remote_lookup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
-	char *sid = argv[0];
-	char *port = argv[1];
-	char *ext = argv[2];
-	ast_log(LOG_WARNING, "remote_lookup %s, %s, %s\n", sid, port, ext);
-	if (ast_exists_extension(NULL, incoming_context, ext, 1, NULL)) {
-		send_lookup_response(sid, port, ext, "");
+	if (monitor_resolve_numbers){
+		char *sid = argv[0];
+		char *port = argv[1];
+		char *ext = argv[2];
+		ast_log(LOG_WARNING, "remote_lookup %s, %s, %s\n", sid, port, ext);
+		if (ast_exists_extension(NULL, incoming_context, ext, 1, NULL)) {
+			send_lookup_response(sid, port, ext, "");
+		}
 	}
 	return 1;
 }
@@ -358,7 +361,10 @@ static void *vomp_monitor(void *ignored){
 			
 		ast_log(LOG_WARNING, "sending monitor vomp command\n");
 		monitor_client_writeline(monitor_client_fd, "MONITOR VOMP\n");
-		monitor_client_writeline(monitor_client_fd, "MONITOR DNAHELPER\n");
+	  
+		if (monitor_resolve_numbers)
+			monitor_client_writeline(monitor_client_fd, "MONITOR DNAHELPER\n");
+	  
 		ast_log(LOG_WARNING, "reading monitor events\n");
 		for(;;){
 			pthread_testcancel();
@@ -478,8 +484,9 @@ static struct ast_frame *vomp_read(struct ast_channel *ast){
 
 static int vomp_write(struct ast_channel *ast, struct ast_frame *frame){
 	struct vomp_channel *vomp_state = ast->tech_pvt;
-	send_audio(vomp_state, frame->data.ptr, frame->samples*2, VOMP_CODEC_PCM);
-	
+	if (vomp_state){
+		send_audio(vomp_state, frame->data.ptr, frame->samples*2, VOMP_CODEC_PCM);
+	}
 	return 0;
 }
 

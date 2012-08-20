@@ -165,6 +165,7 @@ register_cli(void) {
 	incoming_context = strdup(tmp);
     }
     
+    monitor_resolve_numbers = ast_true(ast_variable_retrieve(cfg, "general", "resolve_numbers"));
     
     setenv("SERVALINSTANCE_PATH", instancepath,1);
     ast_log(LOG_WARNING, "Using instance path %s\n", instancepath);

@@ -14,5 +14,5 @@ int vomp_unregister_channel(void);
 int register_cli(void);
 
 extern char *incoming_context;
-
+extern int monitor_resolve_numbers;
 #endif
