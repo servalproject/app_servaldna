@@ -82,7 +82,7 @@ static const struct ast_channel_tech vomp_tech = {
 	.type         = type,
 	.description  = tdesc,
 	.capabilities = AST_FORMAT_ULAW | AST_FORMAT_ALAW | AST_FORMAT_SLINEAR,
-	.properties = AST_CHAN_TP_WANTSJITTER | AST_CHAN_TP_CREATESJITTER,
+	.properties       = AST_CHAN_TP_CREATESJITTER,
 	.requester    = vomp_request,
 	.call         = vomp_call,
 	.hangup       = vomp_hangup,
@@ -92,6 +92,15 @@ static const struct ast_channel_tech vomp_tech = {
 	.exception    = NULL,
 	.indicate     = vomp_indicate,
 	.fixup        = vomp_fixup,
+};
+
+static struct ast_jb_conf jbconf =
+{
+	.flags = AST_JB_ENABLED,
+	.max_size = 200,
+	.resync_threshold = 1000,
+	.impl = "fixed",
+	.target_extra = 40,
 };
 
 struct vomp_channel {
@@ -170,6 +179,8 @@ static struct ast_channel *new_channel(struct vomp_channel *vomp_state, const in
 	ao2_ref(vomp_state, 1);
 	ast->tech_pvt=vomp_state;
 	vomp_state->owner = ast;
+	
+	ast_jb_configure(ast, &jbconf);
 	
 	ao2_unlock(vomp_state);
 	return ast;
@@ -303,16 +314,37 @@ int remote_audio(char *cmd, int argc, char **argv, unsigned char *data, int data
 	struct vomp_channel *vomp_state=get_channel(argv[0]);
 	if (vomp_state){
 		if (vomp_state->owner){
+			int codec = strtol(argv[1], NULL, 10);
+			int start_time = strtol(argv[2], NULL, 10);
+			int end_time = strtol(argv[3], NULL, 10);
+			int sequence = strtol(argv[4], NULL, 10);
+			
+			switch (codec){
+				case VOMP_CODEC_8ULAW:
+					codec = AST_FORMAT_ULAW;
+					break;
+				case VOMP_CODEC_8ALAW:
+					codec = AST_FORMAT_ALAW;
+					break;
+				case VOMP_CODEC_PCM:
+					codec = AST_FORMAT_SLINEAR;
+					break;
+				default:
+					return 0;
+			}
 	
 			// currently assumes 16bit, 8kHz pcm
-			// TODO deal with packet loss and reordering?
 			struct ast_frame f = {
 				.frametype = AST_FRAME_VOICE,
-				.subclass.codec = AST_FORMAT_SLINEAR,
+				.flags = AST_FRFLAG_HAS_TIMING_INFO,
+				.subclass.codec = codec,
 				.src = "vomp_call",
 				.data.ptr = data,
 				.datalen = dataLen,
 				.samples = dataLen / sizeof(int16_t),
+				.ts = start_time -1 +20,
+				.len = end_time +1 - start_time,
+				.seqno = sequence,
 			};
 			ast_queue_frame(vomp_state->owner, &f);
 			ret=1;
@@ -485,7 +517,22 @@ static struct ast_frame *vomp_read(struct ast_channel *ast){
 static int vomp_write(struct ast_channel *ast, struct ast_frame *frame){
 	struct vomp_channel *vomp_state = ast->tech_pvt;
 	if (vomp_state){
-		send_audio(vomp_state, frame->data.ptr, frame->samples*2, VOMP_CODEC_PCM);
+		int codec;
+		switch (frame->subclass.codec){
+			case AST_FORMAT_ULAW:
+				codec = VOMP_CODEC_8ULAW;
+				break;
+			case AST_FORMAT_ALAW:
+				codec = VOMP_CODEC_8ALAW;
+				break;
+			case AST_FORMAT_SLINEAR:
+				codec = VOMP_CODEC_PCM;
+				break;
+			default:
+				return 0;
+		}
+	  
+		send_audio(vomp_state, frame->data.ptr, frame->samples*2, codec);
 	}
 	return 0;
 }
