@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python -u
 
 #
 # Copyright 2012 Serval Project Inc
