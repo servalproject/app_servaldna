@@ -422,16 +422,27 @@ static struct ast_channel *vomp_request(const char *type, format_t format, const
 	// assume dest = servald subscriber id (sid)
 	// TODO parse dest = sid/did
 	char sid[64], *dest = dest_, did[64];
-	int i=0, j=0;
+	int i=0;
 	for (;i<sizeof(sid) && dest[i] && dest[i]!='/';i++)
 		sid[i]=dest[i];
 	
 	sid[i]=0;
 	
-	if (dest[i++])
-		for (;j<sizeof(did) && dest[i+j];j++)
-			did[j]=dest[i+j];
-	did[j]=0;
+	// copy the phone number from the last path segment
+	dest+=i;
+	i=0;
+	if (*dest++){
+		for (;i<sizeof(did) && dest[i];i++){
+			if (dest[i]=='/'){
+				// start copying again from the beginning
+				dest+=i+1;
+				i=-1;
+			}else{
+				did[i]=dest[i];
+			}
+		}
+	}
+	did[i]=0;
 	
 	ast_log(LOG_WARNING, "vomp_request %s/%s\n", type, sid);
 	struct vomp_channel *vomp_state=new_vomp_channel();
