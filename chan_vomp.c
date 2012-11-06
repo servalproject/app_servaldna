@@ -74,7 +74,7 @@ static const char type[] = "VOMP";
 static const char tdesc[] = "Serval Vomp Channel Driver";
 char *incoming_context = "servald-in";
 
-AST_MUTEX_DEFINE_STATIC(vomplock); 
+//AST_MUTEX_DEFINE_STATIC(vomplock); 
 int monitor_client_fd=-1;
 int monitor_resolve_numbers;
 
@@ -126,6 +126,7 @@ struct monitor_command_handler monitor_handlers[]={
 	{.command="CALLSTATUS",    .handler=remote_noop},
 	{.command="MONITORSTATUS", .handler=remote_noop},
 	{.command="MONITOR",       .handler=remote_noop},
+	{.command="INFO",          .handler=remote_noop},
 };
 
 int chan_id=0;
