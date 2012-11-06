@@ -392,10 +392,11 @@ static void *vomp_monitor(void *ignored){
 		}
 			
 		ast_log(LOG_WARNING, "sending monitor vomp command\n");
-		monitor_client_writeline(monitor_client_fd, "MONITOR VOMP\n");
+		monitor_client_writeline(monitor_client_fd, "monitor vomp %d\n",
+					 VOMP_CODEC_PCM);
 	  
 		if (monitor_resolve_numbers)
-			monitor_client_writeline(monitor_client_fd, "MONITOR DNAHELPER\n");
+			monitor_client_writeline(monitor_client_fd, "monitor dnahelper\n");
 	  
 		ast_log(LOG_WARNING, "reading monitor events\n");
 		for(;;){
