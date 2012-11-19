@@ -57,7 +57,7 @@ static void send_hangup(int session_id);
 static void send_ringing(struct vomp_channel *vomp_state);
 static void send_pickup(struct vomp_channel *vomp_state);
 static void send_call(const char *sid, const char *caller_id, const char *remote_ext);
-static void send_audio(struct vomp_channel *vomp_state, unsigned char *buffer, int len, int codec);
+static void send_audio(struct vomp_channel *vomp_state, unsigned char *buffer, int len, int codec, int time, int sequence);
 static void send_lookup_response(const char *sid, const char *port, const char *ext, const char *name);
 
 static int remote_dialing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
@@ -65,6 +65,7 @@ static int remote_call(char *cmd, int argc, char **argv, unsigned char *data, in
 static int remote_pickup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 static int remote_hangup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 static int remote_audio(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
+static int remote_codecs(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 static int remote_ringing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 static int remote_noop(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 static int remote_lookup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
@@ -79,19 +80,18 @@ int monitor_client_fd=-1;
 int monitor_resolve_numbers;
 
 static const struct ast_channel_tech vomp_tech = {
-	.type         = type,
-	.description  = tdesc,
-	.capabilities = AST_FORMAT_ULAW | AST_FORMAT_ALAW | AST_FORMAT_SLINEAR,
-	.properties       = AST_CHAN_TP_CREATESJITTER,
-	.requester    = vomp_request,
-	.call         = vomp_call,
-	.hangup       = vomp_hangup,
-	.answer       = vomp_answer,
-	.read         = vomp_read,
-	.write        = vomp_write,
-	.exception    = NULL,
-	.indicate     = vomp_indicate,
-	.fixup        = vomp_fixup,
+	.type             = type,
+	.description      = tdesc,
+	.capabilities     = AST_FORMAT_ULAW | AST_FORMAT_ALAW | AST_FORMAT_SLINEAR | AST_FORMAT_GSM,
+	.properties       = AST_CHAN_TP_WANTSJITTER | AST_CHAN_TP_CREATESJITTER,
+	.requester        = vomp_request,
+	.call             = vomp_call,
+	.hangup           = vomp_hangup,
+	.answer           = vomp_answer,
+	.read             = vomp_read,
+	.write            = vomp_write,
+	.indicate         = vomp_indicate,
+	.fixup            = vomp_fixup,
 };
 
 static struct ast_jb_conf jbconf =
@@ -120,7 +120,8 @@ struct monitor_command_handler monitor_handlers[]={
 	{.command="ANSWERED",      .handler=remote_pickup},
 	{.command="CALLTO",        .handler=remote_dialing},
 	{.command="HANGUP",        .handler=remote_hangup},
-	{.command="AUDIOPACKET",   .handler=remote_audio},
+	{.command="AUDIO",         .handler=remote_audio},
+	{.command="CODECS",        .handler=remote_codecs},
 	{.command="LOOKUP",        .handler=remote_lookup},
 	{.command="KEEPALIVE",     .handler=remote_noop},
 	{.command="CALLSTATUS",    .handler=remote_noop},
@@ -205,20 +206,21 @@ struct vomp_channel *get_channel(char *token){
 // Send outgoing monitor messages
 
 // TODO fix servald, commands are currently case sensitive
-void send_hangup(int session_id){
+static void send_hangup(int session_id){
 	monitor_client_writeline(monitor_client_fd, "hangup %06x\n",session_id);
 }
-void send_ringing(struct vomp_channel *vomp_state){
+static void send_ringing(struct vomp_channel *vomp_state){
 	monitor_client_writeline(monitor_client_fd, "ringing %06x\n",vomp_state->session_id);
 }
-void send_pickup(struct vomp_channel *vomp_state){
+static void send_pickup(struct vomp_channel *vomp_state){
 	monitor_client_writeline(monitor_client_fd, "pickup %06x\n",vomp_state->session_id);
 }
-void send_call(const char *sid, const char *caller_id, const char *remote_ext){
+static void send_call(const char *sid, const char *caller_id, const char *remote_ext){
 	monitor_client_writeline(monitor_client_fd, "call %s %s %s\n", sid, caller_id, remote_ext);
 }
-void send_audio(struct vomp_channel *vomp_state, unsigned char *buffer, int len, int codec){
-	monitor_client_writeline_and_data(monitor_client_fd, buffer, len, "AUDIO %06x %d\n", vomp_state->session_id, codec);
+static void send_audio(struct vomp_channel *vomp_state, unsigned char *buffer, int len, int codec, int time, int sequence){
+	monitor_client_writeline_and_data(monitor_client_fd, buffer, len, "audio %06x %d %d %d\n", 
+					  vomp_state->session_id, codec, time, sequence);
 }
 static void send_lookup_response(const char *sid, const char *port, const char *ext, const char *name){
 	ast_log(LOG_WARNING, "lookup match %s %s %s %s\n", sid, port, ext, name);
@@ -227,7 +229,7 @@ static void send_lookup_response(const char *sid, const char *port, const char *
 
 // CALLTO [token] [localsid] [localdid] [remotesid] [remotedid]
 // sent so that we can link an outgoing call to a servald session id
-int remote_dialing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+static int remote_dialing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
 	ast_log(LOG_WARNING, "remote_dialing\n");
 	if (!dialed_call)
 		return 0;
@@ -238,7 +240,7 @@ int remote_dialing(char *cmd, int argc, char **argv, unsigned char *data, int da
 }
 
 // CALLFROM [token] [localsid] [localdid] [remotesid] [remotedid]
-int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+static int remote_call(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
 	// TODO fix servald and other VOMP clients to pass extension correctly
 	// TODO add callerid...
 	char *ext = argv[2];
@@ -277,7 +279,7 @@ static int remote_lookup(char *cmd, int argc, char **argv, unsigned char *data, 
 	return 1;
 }
 
-int remote_pickup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+static int remote_pickup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
 	int ret=0;
 	ast_log(LOG_WARNING, "remote_pickup\n");
 	struct vomp_channel *vomp_state=get_channel(argv[0]);
@@ -294,7 +296,7 @@ int remote_pickup(char *cmd, int argc, char **argv, unsigned char *data, int dat
 	return ret;
 }
 
-int remote_hangup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+static int remote_hangup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
 	int ret=0;
 	ast_log(LOG_WARNING, "remote_hangup\n");
 	struct vomp_channel *vomp_state=get_channel(argv[0]);
@@ -310,43 +312,54 @@ int remote_hangup(char *cmd, int argc, char **argv, unsigned char *data, int dat
 	return ret;
 }
 
-int remote_audio(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+static int remote_audio(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
 	int ret=0;
 	struct vomp_channel *vomp_state=get_channel(argv[0]);
 	if (vomp_state){
 		if (vomp_state->owner){
 			int codec = strtol(argv[1], NULL, 10);
 			int start_time = strtol(argv[2], NULL, 10);
-			int end_time = strtol(argv[3], NULL, 10);
-			int sequence = strtol(argv[4], NULL, 10);
+			int sequence = strtol(argv[3], NULL, 10);
+			
+			struct ast_frame f = {
+				.frametype = AST_FRAME_VOICE,
+				.flags = AST_FRFLAG_HAS_TIMING_INFO,
+				.src = "vomp_call",
+				.data.ptr = data,
+				.datalen = dataLen,
+				.ts = start_time -1 +20,
+				.seqno = sequence,
+			};
 			
 			switch (codec){
-				case VOMP_CODEC_8ULAW:
-					codec = AST_FORMAT_ULAW;
+				case VOMP_CODEC_ULAW:
+					f.subclass.codec = AST_FORMAT_ULAW;
+					f.len = dataLen/8;
+					f.samples = dataLen;
 					break;
-				case VOMP_CODEC_8ALAW:
-					codec = AST_FORMAT_ALAW;
+				case VOMP_CODEC_ALAW:
+					f.subclass.codec = AST_FORMAT_ALAW;
+					f.len = dataLen/8;
+					f.samples = dataLen;
 					break;
-				case VOMP_CODEC_PCM:
-					codec = AST_FORMAT_SLINEAR;
+				case VOMP_CODEC_16SIGNED:
+					f.subclass.codec = AST_FORMAT_SLINEAR;
+					f.len = dataLen/16;
+					f.samples = dataLen / sizeof(int16_t);
+					break;
+				case VOMP_CODEC_GSM:
+					f.subclass.codec = AST_FORMAT_GSM;
 					break;
 				default:
 					return 0;
 			}
-	
-			// currently assumes 16bit, 8kHz pcm
-			struct ast_frame f = {
-				.frametype = AST_FRAME_VOICE,
-				.flags = AST_FRFLAG_HAS_TIMING_INFO,
-				.subclass.codec = codec,
-				.src = "vomp_call",
-				.data.ptr = data,
-				.datalen = dataLen,
-				.samples = dataLen / sizeof(int16_t),
-				.ts = start_time -1 +20,
-				.len = end_time +1 - start_time,
-				.seqno = sequence,
-			};
+			
+			if (f.subclass.codec != (vomp_state->owner->readformat & AST_FORMAT_AUDIO_MASK)){
+				vomp_state->owner->readformat=f.subclass.codec;
+				// force audio transcoding paths to be rebuilt (I think...)
+				ast_set_read_format(vomp_state->owner, vomp_state->owner->readformat);
+			}
+			
 			ast_queue_frame(vomp_state->owner, &f);
 			ret=1;
 		}
@@ -355,8 +368,36 @@ int remote_audio(char *cmd, int argc, char **argv, unsigned char *data, int data
 	return ret;
 }
 
+static int remote_codecs(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+	struct vomp_channel *vomp_state=get_channel(argv[0]);
+	if (vomp_state){
+		int i;
+		int codec_mask=0;
+		for (i=1;i<argc;i++){
+			int codec = atoi(argv[i]);
+			switch(codec){
+				case VOMP_CODEC_ULAW:
+					codec_mask|=AST_FORMAT_ULAW;
+					break;
+				case VOMP_CODEC_ALAW:
+					codec_mask|=AST_FORMAT_ALAW;
+					break;
+				case VOMP_CODEC_16SIGNED:
+					codec_mask|=AST_FORMAT_SLINEAR;
+					break;
+				case VOMP_CODEC_GSM:
+					codec_mask|=AST_FORMAT_GSM;
+					break;
+			}
+		}
+		vomp_state->owner->nativeformats = codec_mask;
+		ast_set_write_format(vomp_state->owner, ast_best_codec(codec_mask));
+	}	
+	return 1;
+}
+
 // remote party has started ringing
-int remote_ringing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+static int remote_ringing(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
 	int ret=0;
 	ast_log(LOG_WARNING, "remote_ringing\n");
 	struct vomp_channel *vomp_state=get_channel(argv[0]);
@@ -371,7 +412,7 @@ int remote_ringing(char *cmd, int argc, char **argv, unsigned char *data, int da
 	return ret;
 }
 
-int remote_noop(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
+static int remote_noop(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context){
 	// NOOP for now, just to eliminate unnecessary log spam
 	return 1;
 }
@@ -391,10 +432,10 @@ static void *vomp_monitor(void *ignored){
 			sleep(10);
 			continue;
 		}
-			
+		
 		ast_log(LOG_WARNING, "sending monitor vomp command\n");
-		monitor_client_writeline(monitor_client_fd, "monitor vomp %d\n",
-					 VOMP_CODEC_PCM);
+		monitor_client_writeline(monitor_client_fd, "monitor vomp %d %d %d %d\n",
+					 VOMP_CODEC_16SIGNED, VOMP_CODEC_ULAW, VOMP_CODEC_ALAW, VOMP_CODEC_GSM);
 	  
 		if (monitor_resolve_numbers)
 			monitor_client_writeline(monitor_client_fd, "monitor dnahelper\n");
@@ -530,22 +571,28 @@ static struct ast_frame *vomp_read(struct ast_channel *ast){
 static int vomp_write(struct ast_channel *ast, struct ast_frame *frame){
 	struct vomp_channel *vomp_state = ast->tech_pvt;
 	if (vomp_state){
-		int codec;
+		int codec, time=-1, sequence=-1;
 		switch (frame->subclass.codec){
 			case AST_FORMAT_ULAW:
-				codec = VOMP_CODEC_8ULAW;
+				codec = VOMP_CODEC_ULAW;
 				break;
 			case AST_FORMAT_ALAW:
-				codec = VOMP_CODEC_8ALAW;
+				codec = VOMP_CODEC_ALAW;
 				break;
 			case AST_FORMAT_SLINEAR:
-				codec = VOMP_CODEC_PCM;
+				codec = VOMP_CODEC_16SIGNED;
 				break;
 			default:
 				return 0;
 		}
+		
+		if (frame->flags & AST_FRFLAG_HAS_TIMING_INFO){
+			time=frame->ts;
+			sequence=frame->seqno;
+		}
+			
 	  
-		send_audio(vomp_state, frame->data.ptr, frame->samples*2, codec);
+		send_audio(vomp_state, frame->data.ptr, frame->datalen, codec, time, sequence);
 	}
 	return 0;
 }
