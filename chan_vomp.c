@@ -223,7 +223,7 @@ static void send_audio(struct vomp_channel *vomp_state, unsigned char *buffer, i
 					  vomp_state->session_id, codec, time, sequence);
 }
 static void send_lookup_response(const char *sid, const char *port, const char *ext, const char *name){
-	ast_log(LOG_WARNING, "lookup match %s %s %s %s\n", sid, port, ext, name);
+	ast_log(LOG_WARNING, "lookup match \"%s\" \"%s\" \"%s\" \"%s\"\n", sid, port, ext, name);
 	monitor_client_writeline(monitor_client_fd, "lookup match %s %s %s %s\n", sid, port, ext, name);
 }
 
