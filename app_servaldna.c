@@ -36,6 +36,7 @@
 #include "app.h"
 #include "log.h"
 #include "strbuf.h"
+#include "conf.h"
 
 static int	servaldna_exec(struct ast_channel *chan, const char *data);
 static char 	*servaldna_lookup(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
@@ -200,6 +201,7 @@ load_module(void){
     ast_log(LOG_WARNING, "Serval load module called\n");
     
     register_cli();
+    cf_init();
     vomp_register_channel();
     return 0;
 }
