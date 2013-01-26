@@ -174,7 +174,7 @@ static struct ast_channel *new_channel(struct vomp_channel *vomp_state, const in
 	
 	ast = ast_channel_alloc(1, state, NULL, NULL, NULL, ext, context, NULL, 0, "VoMP/%08x", vomp_state->chan_id);
 	
-	ast->nativeformats = AST_FORMAT_SLINEAR;
+	ast->nativeformats = vomp_tech.capabilities;
 	ast->readformat = AST_FORMAT_SLINEAR;
 	ast->writeformat = AST_FORMAT_SLINEAR;
 	ast->tech=&vomp_tech;
@@ -526,6 +526,7 @@ static int vomp_indicate(struct ast_channel *ast, int ind, const void *data, siz
 	
 	struct vomp_channel *vomp_state = ast->tech_pvt;
 	switch(ind){
+		case AST_CONTROL_PROGRESS:
 		case AST_CONTROL_RINGING:
 			if (!vomp_state->initiated)
 				send_ringing(vomp_state);
