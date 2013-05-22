@@ -1,5 +1,6 @@
 Serval VoMP Channel Driver for Asterisk
 =======================================
+[Serval Project][], May 2013
 
 This repository contains the source code for the [Serval Project][]'s [VoMP][]
 channel driver for [Asterisk 1.8][] implemented in [GNU C][], together with an
@@ -12,6 +13,9 @@ a [VoIP][] provider, or to a telephone network with an Asterisk gateway, such
 as the [Mesh Potato][] by [VillageTelco][] or [Commotion OpenBTS][] by the
 [Commotion Wireless][] project.
 
+See [README-OpenBTS](./README-OpenBTS.md) for more information about Commotion
+OpenBTS integration.
+
 The channel driver has been tested with Asterisk 1.8.14.0 and will probably
 work with higher versions 1.8.x.
 
@@ -22,29 +26,40 @@ Asterisk loads modules.  Asterisk must then be configured with a dial plan that
 uses the VoMP channel driver module to route calls to and from the Serval mesh.
 These steps are described below.
 
-Principles of operation
------------------------
+Concept of operation
+--------------------
 
-A VoMP gateway is a server running the [Asterisk 1.8][] and [Serval DNA][]
-daemons.  The gateway has its own [SID][] (Serval subscriber identifier).
+A VoMP gateway is a server or node connected to both the [Serval mesh
+network][] and to an external network (such as the Internet), and running the
+integrated [Asterisk 1.8][] and [Serval DNA][] daemons integrated using this
+channel driver.  The gateway has its own [SID][] (Serval subscriber
+identifier).
 
 Calls are routed out of the Serval mesh by having the VoMP gateway respond to
-[DNA][] (phone lookup) requests by querying the Asterisk dial plan for the
-requested [DID][] (phone number).  If the DID is found, then the gateway responds
-to the DNA request with its own SID.  If the caller chooses the gateway to
-place the call, then it will send a VoMP CALL request to gateway, with the
-final (destination) phone number.  The [Serval DNA][] daemon on the gateway
-will set up a call through Asterisk by sending a command via the channel
-driver.
+[DNA][] (phone lookup) requests by invoking a [DNA Helper][] script to test
+whether the [DID][] (phone number) is reachable via Asterisk.  If so, the
+gateway responds to the DNA request with a VoMP URI containing its own [SID][].
+The caller then places the call by sending a VoMP CALL request to the gateway's
+SID, specifying the final (destination) phone number that was originally
+queried.  The [Serval DNA][] daemon on the gateway then initiates the call
+through Asterisk by sending commands via the channel driver, and bridges the
+VoMP audio stream to and from Asterisk via the channel driver.
 
-Calls are routed into the Serval mesh by having the Asterisk dial plan use the
-channel driver to query the [Serval DNA][] daemon for the called number.  The
-Serval DNA daemon will broadcast a DNA request on the mesh and return any
-responses to Asterisk.  The channel driver will choose one response and command
-the Serval DNA daemon to initiate a VoMP call to the responder.
+Calls are routed into the Serval mesh if an Asterisk dial plan invokes the
+channel driver's [AGI][] script to resolve a [DID][].  The AGI script invokes
+the [Serval DNA][] binary to perform a [DNA][] request on the Serval mesh
+network.  All the reachable nodes in the Serval mesh which match the DID
+(including other gateways) will reply to the request with a VoMP URI containing
+theid [SID][].  If any DNA reply is received, the AGI script will return a
+positive result to the Asterisk dial plan, which will choose one of the URIs.
+If the chosen URI is a VoMP URI, then Asterisk will command the Serval DNA
+daemon via the channel driver to initiate a call to the given SID, and the
+channel driver will then bridge the VoMP audio stream between Asterisk and
+the Serval DNA daemon.
 
-The channel driver performs audio stream conversion to and from the VoMP codec
-and handles call negotiation and tear-down.
+The channel driver performs audio stream conversion between the VoMP codec and
+Asterisk's internal audio stream format.  The channel driver also handles codec
+negotiation and call tear-down.
 
 Dependencies
 ------------
@@ -201,6 +216,9 @@ below.
 
 The **conf_adv/** directory contains a more advanced set of sample Asterisk
 configuration files that were developed for [Commotion OpenBTS][] integration.
+
+See [README-OpenBTS](./README-OpenBTS.md) for more information about Commotion
+OpenBTS integration.
 
 The advanced configuration does not provision numbers in `extensions.conf`, but
 instead looks up the OpenBTS database.  It includes a a [DNA Helper][] script
