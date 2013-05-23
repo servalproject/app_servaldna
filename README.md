@@ -135,7 +135,22 @@ available at a known path.  For example, on Linux:
     # cp -p servald directory_service /usr/sbin
     #
 
+Configure Serval DNA
+--------------------
+
 Follow the configuration instructions in [Servald-Configuration.md][].
+
+The [Serval DNA][] daemon must be configured with the UID of the running
+Asterisk daemon process, to allow the channel driver to communicate with the
+[Serval DNA][] daemon.  This must match the `AST_USER` variable in the
+`/etc/defaults/asterisk` file and must be numeric, not a login name.
+
+For example, add the following line to `/var/serval-node/serval.conf`:
+
+    monitor.uid=106
+
+Without this line, or with an incorrect UID, [Serval DNA][] will reject
+connections from the channel driver.
 
 Download channel driver
 -----------------------
@@ -189,19 +204,24 @@ For example, on Mac OS X:
 Configure Asterisk to use the channel driver
 --------------------------------------------
 
-Two alternative sample configurations are provided, basic and advanced.
+Two alternative sample configurations are provided, basic and advanced:
 
-### Basic configuration
+* the [conf](./conf/) directory contains a set of basic sample Asterisk configuration
+  files.  See below for instructions.
 
-The **conf/** directory contains a set of basic sample Asterisk configuration
-files.
+* the [conf\_adv](./conf_adv/) directory contains an advanced set of sample
+  Asterisk configuration files that were developed for [Commotion OpenBTS][]
+  integration testing.  It does not provision numbers statically in
+  `extensions.conf`, but instead looks up the OpenBTS registered subscriber
+  database.  See [README-OpenBTS](./README-OpenBTS.md) for instructions.
 
-The basic sample configuration does not use a database; all of the extensions
-are provisioned statically in `extensions.conf`.  This allows the channel
-driver to resolve numbers directly by asking Asterisk what is in the dialplan
-if `resolve_numbers` is true (false by default).  This will result in servald
-responding to incoming DNA requests with its own [SID][] for all numbers
-provisioned in `extensions.conf`.
+### Basic sample configuration
+
+The basic sample configuration provisions all extensions statically in
+`extensions.conf`.  This allows the channel driver to resolve numbers directly
+by asking Asterisk what is in the dialplan if `resolve_numbers` is true (false
+by default).  This will result in servald responding to incoming DNA requests
+with its own [SID][] for all numbers provisioned in `extensions.conf`.
 
 For example, on Linux, copy the Asterisk configuration files:
 
@@ -211,42 +231,6 @@ For example, on Linux, copy the Asterisk configuration files:
 
 then update the `extensions.conf` and `servaldna.conf` files as described
 below.
-
-### Advanced configuration
-
-The **conf_adv/** directory contains a more advanced set of sample Asterisk
-configuration files that were developed for [Commotion OpenBTS][] integration.
-
-See [README-OpenBTS](./README-OpenBTS.md) for more information about Commotion
-OpenBTS integration.
-
-The advanced configuration does not provision numbers in `extensions.conf`, but
-instead looks up the OpenBTS database.  It includes a a [DNA Helper][] script
-`num2sip.py` that allows the Serval DNA daemon to resolve [DID][] lookups using
-the OpenBTS database, so that Serval mesh users can dial GSM phones.  The
-script is configured with the absolute path of the OpenBTS database, which must
-coincide with the database path configured in Asterisk.
-
-For example, on Linux, copy the Asterisk configuration files:
-
-    $ sudo su
-    # cp conf_adv/asterisk/* /etc/asterisk
-    #
-
-then update the `extensions.conf` and `servaldna.conf` files as described
-below.
-
-For example, on Linux, copy the DNA Helper script and its configuration file:
-
-    $ sudo su
-    # cp conf_adv/num2sip.py /usr/lib/asterisk
-    # cp conf_adv/num2sip.ini /etc/asterisk
-    #
-
-For example, add the following lines to `/var/serval-node/serval.conf`:
-
-    dna.helper.executable=/usr/lib/asterisk/num2sip.py
-    dna.helper.argv.1=/etc/asterisk/num2sip.py
 
 ### Update extensions.conf
 
@@ -267,21 +251,6 @@ DNA][] daemon.  This will allow the channel driver to communicate with the
 daemon.  For example, to use Serval DNA's default built-in instance path:
 
     instancepath = /var/serval-node
-
-Configure Serval DNA
---------------------
-
-The [Serval DNA][] daemon must be configured with the UID of the running
-Asterisk daemon process, to allow the channel driver to communicate with the
-[Serval DNA][] daemon.  This must match the `AST_USER` variable in the
-`/etc/defaults/asterisk` file, but must be the numeric UID, not a login name.
-
-For example, add the following line to `/var/serval-node/serval.conf`:
-
-    monitor.uid=106
-
-Without this line, or with an incorrect UID, [Serval DNA][] will reject
-connections from the channel driver.
 
 About the examples
 ------------------
