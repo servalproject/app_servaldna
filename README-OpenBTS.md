@@ -21,31 +21,34 @@ operation, downloading, building and configuring.
 The integration was originally tested using [OpenBTS][] 2.8 with Asterisk
 1.8.14.1 and [Serval DNA 48c899d][].
 
-Operational concept
--------------------
+Concept of operation
+--------------------
 
-The [OpenBTS][] software has three components: **OpenBTS**, **smqueue** and
-**sipauthserve**, which together allow a GSM phone to register with the OpenBTS
-unit and then make and receive [SIP][] calls.  Essentially, an OpenBTS unit
-acts as a single cell in a cellular mobile network.
+An OpenBTS unit runs the following software:
 
-The [Serval DNA][] daemon communicates with other daemons running on other
-nodes on the [Serval mesh network][] using [MDP][] encapsulated within
-[UDP/IP][] over [Wi-Fi][].
+ * The [OpenBTS][] software has three components: **OpenBTS**, **smqueue** and
+   **sipauthserve**, which together allow a GSM phone to register with the
+   OpenBTS unit and then make and receive [SIP][] calls.  Essentially, an
+   OpenBTS unit acts as a single cell in a cellular mobile network.
+
+ * The [Serval DNA][] daemon communicates with other daemons running on other
+   nodes on the [Serval mesh network][] using [MDP][] encapsulated within
+   [UDP/IP][] over [Wi-Fi][].
 
 Every [Serval DNA][] daemon has its own [Serval Identity (SID)][SID], which is
 a unique public key in an [elliptic curve cryptosystem][crypto].  The SID is
 used as the mesh network address of the node.  Every node also has a [phone
 number (DID)][DID] which may or may not be unique.
 
-The [Serval DNA][] daemon uses the [DNA][] protocol to resolve a phone number
-into a SID by broadcasting a DNA Lookup request and waiting for responses in
-the form of a [URI][].  Every [Serval DNA][] daemon responds to DNA requests
-for its own phone number by returning a VoMP URI containing its own [SID][] and
-its own [DID][].  If a daemon is configured with a [DNA Helper][] script, then
-it will invoke the script whenever a DNA Lookup request is received, and return
-any URI that the script produces to the requestor.  This allows a daemon to act
-as a proxy for more phone numbers than the one assigned to it.
+When placing a [VoMP][] phone call, the [Serval DNA][] daemon first uses the
+[DNA][] protocol to resolve the called phone number to a SID by broadcasting a
+DNA Lookup request and waiting for responses in the form of [URI][]s.  Every
+[Serval DNA][] daemon on a reachable node responds to DNA requests for its own
+phone number by returning a VoMP URI containing its own [SID][] and its own
+[DID][].  If a daemon is configured with a [DNA Helper][] script, then it will
+invoke the script whenever a DNA Lookup request is received, and return any URI
+that the script produces to the requestor.  This allows a daemon to act as a
+proxy for more phone numbers than just its own [DID][].
 
 For OpenBTS integration, the [DNA Helper][] script [num2sip.py][] was
 developed, which looks up the [DID][] in the OpenBTS subscriber registry (an
@@ -174,7 +177,7 @@ negotiation, ringing and call pick-up all work the same way.
 by the [Batphone][] Java app, typically by invoking a native codec library
 through a [JNI][] interface.
 
-### Serval-to-GSM calls
+### Establishment of Serval-to-GSM call
 
 This describes the steps involved when a [Serval Mesh][] smart-phone on the
 [Serval mesh network][] calls a GSM phone in A's cell.
@@ -209,101 +212,12 @@ downloading, building and configuring [Serval DNA][] and the channel driver.
 Configuration
 -------------
 
+The sample configuration in the [conf\_adv](./conf_adv/) directory was used for
+developing and testing the OpenBTS integration, so this is the best starting
+point.
 
-The sample configuration files in the [conf\_adv](./conf_adv/) directory were
-used for developing and testing the OpenBTS integration, so these are the best
-starting point.
-
-The advanced configuration queries the OpenBTS registered subscribers database
-to resolve calls to GSM phones.  It includes the following files:
-
-* `num2sip.py` is a [DNA Helper][] script that allows the Serval DNA daemon to
-  resolve [DID][] lookups using the OpenBTS database, so that [Serval Mesh][]
-  users and other OpenBTS units can reach GSM phones.
-
-* `num2sip.ini` is the configuration for `num2sip.py`, which contains the
-  absolute path of the OpenBTS subscriber registry database, which must
-  coincide with the same path configured in Asterisk.
-
-* `logger.conf` increases the logging verbosity to make debugging simpler, and
-  is optional.
-
-* `cdr.conf` and `indications.conf` are boiler plate files copied unmodified
-  from the Asterisk example configuration.
-
-* `modules.conf` is a minimal file to make sure auto module loading is on.  If
-  you are debugging by running `asterisk -r` then running `core set verbose 3`
-  will cause a lot of things to be printed when a call is made.
-
-* `func_odbc.conf` tells the ODBC module to register a function which lets the
-  dial plan perform any SQL query on the OpenBTS database.
-
-* `sip.conf` causes Asterisk to bind to the default port (5060) and treat
-  incoming connections from 127.0.0.1:5062 for the "openbts" context (used in
-  the dial plan).
-
-* `servaldna.conf` gives the channel driver the instance path of the [Serval
-  DNA][] daemon so that it can access the monitor socket.  It also sets the
-  context name (`incoming-trunk` in this case) for incoming connections so they
-  can be sorted out in the dial plan. If `resolve_numbers` is true then the
-  channel driver will resolve numbers for the Serval daemon by looking for
-  matching patterns in the dial plan, but since we are using dynamic lookups in
-  the database we cannot use this feature.
-
-* `extensions.conf` is the Asterisk dial plan – this controls how calls are
-  routed and can do virtually anything.  It contains several sections:
-
-    + The `[globals]` section defines several variables which are explained in
-      [“Update extensions.conf” section in
-      README.md](./README.md#update-extensions.conf).
-
-    + The `[test]` context provides 2 numbers – 2600 and 2601 – which can be
-      used to test handsets.
-
-    + The `[incoming-trunk]` context handles incoming [VoMP][] calls, using the
-      `call-local` macro to look up then call a GSM handset.
-
-    + The `[openbts]` context handles calls from GSM handsets.  First it fixes
-      their caller ID by translating the [IMSI][] to a phone number using the
-      subscriber registry database.  Next, it checks if calling a test number
-      or is a local call (using the `call-local` macro).  If neither, then it
-      goes to `outbound-trunk` which uses the [AGI][] script to ask the [Serval
-      DNA][] daemon to resolve the number.  If this succeeds, Asterisk will
-      connect to the remote URI generated by the Serval daemon and bridge it
-      with the [SIP][] call from the GSM handset.
-
-For example, on Linux, copy the Asterisk configuration files:
-
-    $ sudo su
-    # cp conf_adv/asterisk/* /etc/asterisk
-    #
-
-then update the installed `extensions.conf` and `servaldna.conf` as described
-in [README “Update extensions.conf”](./README.md#update-extensions.conf) and
-[README “Update servaldna.conf”](./README.md#update-servaldna.conf).
-
-For example, on Linux, copy the DNA Helper script and its configuration file:
-
-    $ sudo su
-    # cp conf_adv/num2sip.py /usr/lib/asterisk
-    # cp conf_adv/num2sip.ini /etc/asterisk
-    #
-
-For example, add the following lines to `/var/serval-node/serval.conf`:
-
-    dna.helper.executable=/usr/lib/asterisk/num2sip.py
-    dna.helper.argv.1=/etc/asterisk/num2sip.py
-
-The ODBC module must be configured to allow Asterisk to query the SQLite
-subscriber registry database directly from within a dial plan.  For testing,
-the following lines were added to `/etc/odbc.ini`:
-
-    [asterisk]
-    Description=SQLite3 database
-    Driver=SQLite3
-    Database=/var/lib/asterisk/sqlite3dir/sqlite3.db
-    # optional lock timeout in milliseconds
-    Timeout=2000
+See [conf\_adv/README.md](./conf_adv/README.md) for more information, including
+installation instructions.
 
 Startup scripts
 ---------------
@@ -393,7 +307,6 @@ the paths used in [README.md](./README.md).
 [Serval DNA 48c899d]: https://github.com/servalproject/serval-dna/commit/48c899df39be2ab9fc2ec5e83cf61beaffcdccfe
 [GSM]: http://en.wikipedia.org/wiki/GSM
 [SIP]: http://en.wikipedia.org/wiki/Session_Initiation_Protocol
-[IMSI]: http://en.wikipedia.org/wiki/International_mobile_subscriber_identity
 [VoMP]: http://developer.servalproject.org/dokuwiki/doku.php?id=content:tech:vomp
 [MDP]: http://developer.servalproject.org/dokuwiki/doku.php?id=content:tech:mdp
 [TCP/IP]: http://en.wikipedia.org/wiki/Transmission_Control_Protocol
