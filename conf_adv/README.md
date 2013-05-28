@@ -148,6 +148,8 @@ the paths used in [README.md](../README.md).
 [Commotion OpenBTS]: https://commotionwireless.net/projects/openbts
 [Serval DNA]: http://developer.servalproject.org/dokuwiki/doku.php?id=content:servaldna:
 [Serval mesh network]: http://developer.servalproject.org/dokuwiki/doku.php?id=content:tech:mesh_network
+[Serval Mesh]: http://developer.servalproject.org/dokuwiki/doku.php?id=content:servalmesh:
+[Servald-Configuration.md]: https://github.com/servalproject/serval-dna/blob/development/doc/Servald-Configuration.md
 [integrate]: http://developer.servalproject.org/dokuwiki/doku.php?id=content:tech:commotion_openbts
 [OpenBTS]: http://wush.net/trac/rangepublic/wiki
 [Asterisk 1.8]: http://www.asterisk.org/downloads/asterisk-news/asterisk-180-released
