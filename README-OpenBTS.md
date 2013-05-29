@@ -203,11 +203,42 @@ codec negotiation, ringing and call pick-up all work the same way.
 by the [Batphone][] Java app, typically by invoking a native codec library
 through a [JNI][] interface.
 
+Hardware
+--------
+
+Serval-OpenBTS integration was developed using a [RangeNetworks 5150][] unit
+supplied by [NAF][].
+
+The quick start guide that came with the provided sufficient information to
+turn it on and configure it.  While setting up basic configuration for the
+unit, the developers unplugged the radio hardware to ensure that it would not
+cause any unexpected transmissions.
+
+The documentation was slightly incorrect. The unit booted with IP address
+192.168.0.22, instead of 192.168.0.21 from the quick start guide.
+
+The simplest methods for modifying OpenBTS config are via its CLI command line
+or web interface.  However if the configuration is invalid this may cause
+OpenBTS to fail to start.  In this case, the only option is to edit the config
+directly in the SQLite database `/etc/OpenBTS/OpenBTS.db`.
+
+To reduce the risk of interference for bench testing, set the attenuation to
+the highest value that still allows phones to discover and connect to the
+network, eg:
+
+    $ ./CLI
+    OpenBTS> power 60 60
+    OpenBTS> [Ctrl-D, A]
+    $
+
 Building and installing
 -----------------------
 
 The channel driver [README](./README.md) file has complete instructions for
 downloading, building and configuring [Serval DNA][] and the channel driver.
+
+The [RangeNetworks 5150][] OpenBTS unit was running Ubuntu 10.4, which supports
+both builds.
 
 Configuration
 -------------
@@ -227,8 +258,15 @@ OpenBTS daemon, smqueue and sipauthserve are started.  For testing, this was
 done by adding a `/usr/sbin/servald start` command to the `/etc/rc.local`
 script.
 
-Testing
--------
+Testing Serval DNA
+------------------
+
+Once built and installed, manually start the [Serval DNA][] daemon, for example:
+
+    $ /usr/sbin/servald start
+    instancepath:/var/serval-node
+    pid:6241
+    $
 
 Once the [Serval DNA][] daemon is running, use the following command to check
 that it has created a single [Serval identity (SID)][SID].  It should just print
@@ -238,38 +276,83 @@ a single line of 64 hex digits, which is the SID:
     B435783C267A7262FDC0150F465746A66426305CE080B1683E0211C3582DBC49
     $
 
-Next, check that GSM subscribers registered to the OpenBTS unit are detected by
-the [DNA][] Lookup command.  Use a phone number of a GSM phone that is known to
-be associated with the OpenBTS unit.  This should print a single line
-containing a “sid:” URI with the [SID][] of the unit's identity, and the
-requested number:
+Configure a meaningful name and phone number ([DID][]) for the OpenBTS unit.
+The OpenBTS unit is a node in the [Serval mesh network][], so it will appear as
+a peer to other [Serval Mesh][] devices, with the chosen name and number.  The
+phone number will be dialed when a [Serval Mesh][] user attempts to call the
+OpenBTS unit itself.  The following example sets the [DID][] to the 10411 echo
+test extension from the sample configuration:
+
+    $ servald set did B435783C267A7262FDC0150F465746A66426305CE080B1683E0211C3582DBC49 "10411" "OpenBTS"
+    $
+
+Integration testing
+-------------------
+
+The [RangeNetworks 5150][] Quick Start Guide describes how to provision two
+handsets for testing.  The following examples assume two provisioned GSM
+handsets associated with the OpenBTS unit with the phone numbers 12345678 and
+87654321, and that each OpenBTS unit has been configured with the echo test
+extension 10411 as its [DID][].
+
+### Test DNA Lookup
+
+Check that GSM handsets are detected by the [DNA][] Lookup command.
+
+The following command, executed on any node in the [Serval mesh network][]
+including the OpenBTS unit itself, should print a single line containing a
+“sid:” URI with the [SID][] of the unit's identity, and the requested number:
 
     $ /usr/sbin/servald dna lookup 12345678
     sid://B435783C267A7262FDC0150F465746A66426305CE080B1683E0211C3582DBC49/12345678:12345678:
     $
 
-You can use the same command to look up the GSM numbers of phones associated
-with other OpenBTS units to check that end-to-end lookup is working across the
-mesh.
+### Test GSM-to-Asterisk
+
+From either GSM handset, call extension 10411 and check that audio is echoed.
+
+### Test local GSM-to-GSM
+
+From either GSM handset, call the other.
+
+### Test remote GSM-to-GSM
+
+This test requires at least two OpenBTS units connected via [Serval Mesh][] and
+with one provisioned GSM handset associated to each.
+
+From either GSM handset, call the other.
+
+### Test Serval-to-Asterisk
+
+From a [Serval Mesh][] phone, check that the OpenBTS unit is listed as a peer
+with phone number 10411.  Call the unit and check that audio is echoed.
+
+### Test GSM-to-Serval
+
+From either GSM handset, call the phone number of a [Serval Mesh][] phone.
+
+### Test Serval-to-GSM
+
+From a [Serval Mesh][] phone, call the number of a GSM handset.
 
 Known issues
 ------------
 
-* During testing, OpenBTS seems quite unreliable.  Calls often failed to go
-  through and there were problems registering. This may be addressed in later
-  versions of OpenBTS.
+* During testing, OpenBTS seemed unreliable.  Calls often failed to go through
+  and there were problems registering GSM handsets. This might be addressed in
+  later versions of OpenBTS.
 
-* The AGI script is runs once per query and invokes [Serval DNA][] each time.
-  This could be optimised if `app_serval.so` could do [DNA][] lookups directly
-  over the *monitor interface*.
+* The AGI script is invoked once per query, and it invokes [Serval DNA][] each
+  time.  This could be optimised if `app_serval.so` could do [DNA][] lookups
+  directly over the *monitor interface*.
 
 * At the time of testing, multi-hop [VoMP][] calls did not work due to immature
-  [Serval mesh routing][] and a lack of compressed VoMP codecs.  This was
-  mitigated by modifying `num2sip.py` to only return SIP URIs, causing
-  inter-OpenBTS calls to bypass [VoMP][] in favour of [TCP/IP][] over
-  [Wi-Fi][].  This would not be a production-ready solution in a typical
-  wireless mesh, which generally has such a high packet loss rate end-to-end
-  that [TCP/IP][] connections frequently fail.
+  [Serval mesh routing][] and a lack of [VoMP codecs][].  This was mitigated by
+  modifying `num2sip.py` to return SIP URIs, causing inter-OpenBTS calls to
+  bypass [VoMP][] in favour of [TCP/IP][] over [Wi-Fi][].  This would not be a
+  production-ready solution in a typical wireless mesh, which generally has
+  such a high packet loss rate end-to-end that [TCP/IP][] connections
+  frequently fail.
 
 * The [Serval DNA][] daemon does not currently cooperate with the [OLSR][]
   routing daemon, so each hop between OpenBTS units must be running a [Serval
@@ -305,6 +388,7 @@ the paths used in [README.md](./README.md).
 [OpenBTS]: http://wush.net/trac/rangepublic/wiki
 [Asterisk 1.8]: http://www.asterisk.org/downloads/asterisk-news/asterisk-180-released
 [Serval DNA 48c899d]: https://github.com/servalproject/serval-dna/commit/48c899df39be2ab9fc2ec5e83cf61beaffcdccfe
+[RangeNetworks 5150]: http://www.rangenetworks.com/products/5150-series
 [GSM]: http://en.wikipedia.org/wiki/GSM
 [SIP]: http://en.wikipedia.org/wiki/Session_Initiation_Protocol
 [VoMP]: http://developer.servalproject.org/dokuwiki/doku.php?id=content:tech:vomp
@@ -324,5 +408,6 @@ the paths used in [README.md](./README.md).
 [num2sip.py]: ./conf_adv/num2sip.py
 [servaldnaagi.py]: ./servaldnaagi.py
 [serval-dna]: https://github.com/servalproject/serval-dna
+[VoMP codecs]: http://developer.servalproject.org/dokuwiki/doku.php?id=content:tech:common_voip_codec_support
 [vomp.c]: https://github.com/servalproject/serval-dna/blob/development/vomp.c
 [Bourne shell]: http://en.wikipedia.org/wiki/Bourne_shell
