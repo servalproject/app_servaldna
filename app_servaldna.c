@@ -36,7 +36,8 @@
 #include "app.h"
 #include "log.h"
 #include "strbuf.h"
-#include "conf.h"
+#include "str.h"
+//#include "conf.h"
 
 static int	servaldna_exec(struct ast_channel *chan, const char *data);
 static char 	*servaldna_lookup(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
@@ -189,19 +190,33 @@ register_cli(void) {
     return -1;
 }
 
-static void
-asterisk_log(int level, struct strbuf *buf) {
-    ast_log(LOG_WARNING, "%s\n", strbuf_str(buf));
-    strbuf_reset(buf);
+void vlogMessage(int level, struct __sourceloc whence, const char *fmt, va_list ap){
+  int alevel = __LOG_VERBOSE;
+  switch(level){
+    case LOG_LEVEL_DEBUG: 
+      alevel = __LOG_DEBUG; break;
+    case LOG_LEVEL_INFO:
+      alevel = __LOG_NOTICE; break;
+    case LOG_LEVEL_WARN:
+      alevel = __LOG_WARNING; break;
+    case LOG_LEVEL_ERROR:
+      alevel = __LOG_ERROR; break;
+  }
+  strbuf b = strbuf_alloca(1024);
+  strbuf_va_vprintf(b, fmt, ap);
+  ast_log(alevel, whence.file, whence.line, whence.function, "%s\n", strbuf_str(b));
 }
+
+void logFlush(){}
+void cf_on_config_change(){}
+void logConfigChanged(){}
 
 static int
 load_module(void){
-    set_log_implementation(asterisk_log);
     ast_log(LOG_WARNING, "Serval load module called\n");
     
     register_cli();
-    cf_init();
+    //cf_init();
     vomp_register_channel();
     return 0;
 }
@@ -214,7 +229,7 @@ unload_module(void) {
 
 static void
 servaldna_query(const char *did, char **reply) {
-    *reply = strdup("foo");
+    *reply = strdup("TODO use mdp to run a dna lookup");
 }
 
 AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Lookup numbers via Serval DNA",

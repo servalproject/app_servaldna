@@ -1,9 +1,9 @@
 Serval VoMP Channel Driver for Asterisk
 =======================================
-[Serval Project][], May 2013
+[Serval Project][], Sept 2014
 
 This repository contains the source code for the [Serval Project][]'s [VoMP][]
-channel driver for [Asterisk 1.8][] implemented in [GNU C][], together with an
+channel driver for [Asterisk 11][] implemented in [GNU C][], together with an
 [AGI][] script in [Python][] and a set of configuration file templates for
 Asterisk.
 
@@ -16,8 +16,8 @@ as the [Mesh Potato][] by [VillageTelco][] or [Commotion OpenBTS][] by the
 See [README-OpenBTS](./README-OpenBTS.md) for more information about Commotion
 OpenBTS integration.
 
-The channel driver has been tested with Asterisk 1.8.14.0 and will probably
-work with higher versions 1.8.x.
+The channel driver has been tested with Asterisk 11.7.0 and will probably
+work with higher versions of 11.x.
 
 The VoMP Asterisk channel driver is only available in source code form, not in
 pre-built (binary) form.  The channel driver source code must be compiled into
@@ -31,7 +31,7 @@ Concept of operation
 
 A VoMP gateway is a server or node connected to both the [Serval mesh
 network][] and to an external network (such as the Internet), and running the
-integrated [Asterisk 1.8][] and [Serval DNA][] daemons integrated using this
+integrated [Asterisk 11][] and [Serval DNA][] daemons integrated using this
 channel driver.  The gateway has its own [SID][] (Serval subscriber
 identifier).
 
@@ -65,7 +65,7 @@ Dependencies
 ------------
 
 In order to compile the VoMP Asterisk channel driver from source code, a
-current build of [Asterisk 1.8][] from source code is needed.  The channel
+current build of [Asterisk 11][] from source code is needed.  The channel
 driver compilation reads build options (such as compiler flags) and header
 files from the Asterisk build.  (If you know of any way to get these from an
 Asterisk installation or development package without downloading and compiling

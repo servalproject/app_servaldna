@@ -23,6 +23,7 @@
 #include "asterisk/lock.h"
 #include "asterisk/channel.h"
 #include "asterisk/config.h"
+#include "asterisk/causes.h"
 #include "asterisk/logger.h"
 #include "asterisk/module.h"
 #include "asterisk/pbx.h"
@@ -40,11 +41,13 @@
 #include <asterisk/ulaw.h>
 
 #include "app.h"
+#include "socket.h"
 #include "monitor-client.h"
 #include "constants.h"
 
-static struct ast_channel  *vomp_request(const char *type, format_t format, const struct ast_channel *requestor, void *dest, int *cause);
-static int vomp_call(struct ast_channel *ast, char *dest, int timeout);
+static struct ast_channel  *vomp_request(const char *type, struct ast_format_cap *cap, 
+    const struct ast_channel *requestor, const char *addr, int *cause);
+static int vomp_call(struct ast_channel *ast, const char *dest, int timeout);
 static int vomp_hangup(struct ast_channel *ast);
 static int vomp_answer(struct ast_channel *ast);
 static struct ast_frame *vomp_read(struct ast_channel *ast);
@@ -70,19 +73,16 @@ static int remote_ringing(char *cmd, int argc, char **argv, unsigned char *data,
 static int remote_noop(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 static int remote_lookup(char *cmd, int argc, char **argv, unsigned char *data, int dataLen, void *context);
 
-static const char desc[] = "Serval Vomp Channel Driver";
-static const char type[] = "VOMP";
-static const char tdesc[] = "Serval Vomp Channel Driver";
 char *incoming_context = "servald-in";
 
 //AST_MUTEX_DEFINE_STATIC(vomplock); 
 int monitor_client_fd=-1;
 int monitor_resolve_numbers;
 
-static const struct ast_channel_tech vomp_tech = {
-	.type             = type,
-	.description      = tdesc,
-	.capabilities     = AST_FORMAT_ULAW | AST_FORMAT_ALAW | AST_FORMAT_SLINEAR | AST_FORMAT_GSM,
+static struct ast_channel_tech vomp_tech = {
+	.type             = "VOMP",
+	.description      = "Serval Vomp Channel Driver",
+	// struct ast_format_cap * capabilities (need to initialise dynamically?)
 	.properties       = AST_CHAN_TP_WANTSJITTER | AST_CHAN_TP_CREATESJITTER,
 	.requester        = vomp_request,
 	.call             = vomp_call,
@@ -165,25 +165,33 @@ static void set_session_id(struct vomp_channel *vomp_state, int session_id){
 }
 
 static struct ast_channel *new_channel(struct vomp_channel *vomp_state, const int state, const char *context, const char *ext){
-	struct ast_channel *ast;
-
-	ao2_lock(vomp_state);
-	
+	struct ast_channel *ast = NULL;
 	if (vomp_state->owner)
 		return vomp_state->owner;
 	
-	ast = ast_channel_alloc(1, state, NULL, NULL, NULL, ext, context, NULL, 0, "VoMP/%08x", vomp_state->chan_id);
+	ao2_lock(vomp_state);
 	
-	ast->nativeformats = vomp_tech.capabilities;
-	ast->readformat = AST_FORMAT_SLINEAR;
-	ast->writeformat = AST_FORMAT_SLINEAR;
-	ast->tech=&vomp_tech;
-	ao2_ref(vomp_state, 1);
-	ast->tech_pvt=vomp_state;
-	vomp_state->owner = ast;
-	
-	ast_jb_configure(ast, &jbconf);
-	
+	struct ast_format_cap *cap = ast_format_cap_alloc(); //TODO AST_FORMAT_CAP_FLAG_DEFAULT
+	if (cap){
+		ast = ast_channel_alloc(1, state, NULL, NULL, NULL, ext, context, NULL, 0, "VoMP/%08x", vomp_state->chan_id);
+		
+		struct ast_format tmpfmt;
+		ast_format_set(&tmpfmt, AST_FORMAT_SLINEAR16, 0);
+		
+		ast_format_cap_add(cap, &tmpfmt);
+		ast_channel_nativeformats_set(ast, cap);
+		
+		ast_set_read_format(ast, &tmpfmt);
+		ast_set_write_format(ast, &tmpfmt);
+		
+		ast_channel_tech_set(ast, &vomp_tech);
+		ast_channel_tech_pvt_set(ast, vomp_state);
+		vomp_state->owner = ast; // add ref?
+		
+		ast_jb_configure(ast, &jbconf);
+		
+		ast_channel_unlock(ast);
+	}
 	ao2_unlock(vomp_state);
 	return ast;
 }
@@ -244,7 +252,6 @@ static int remote_call(char *cmd, int argc, char **argv, unsigned char *data, in
 	// TODO fix servald and other VOMP clients to pass extension correctly
 	// TODO add callerid...
 	char *ext = argv[2];
-	ast_log(LOG_WARNING, "remote_call for \"%s\"\n", argv[2]);
 	int session_id=strtol(argv[0], NULL, 16);
 	
 	if (ast_exists_extension(NULL, incoming_context, ext, 1, NULL)) {
@@ -253,15 +260,16 @@ static int remote_call(char *cmd, int argc, char **argv, unsigned char *data, in
 		vomp_state->initiated=0;
 		
 		struct ast_channel *ast = new_channel(vomp_state, AST_STATE_RINGING, incoming_context, ext);
-		ast_log(LOG_WARNING, "Handing call %s@%s over to pbx_start\n", ext, incoming_context);
+		ast_log(LOG_WARNING, "Placing call to %s@%s\n", ext, incoming_context);
 		if (ast_pbx_start(ast)) {
-			ast->hangupcause = AST_CAUSE_SWITCH_CONGESTION;
+			ast_channel_hangupcause_set(ast, AST_CAUSE_SWITCH_CONGESTION);
 			ast_log(LOG_WARNING, "pbx_start failed, hanging up\n");
-			ast_hangup(ast);
+			ast_queue_hangup(ast);
 			return 0;
 		}
 		return 1;
 	}
+	ast_log(LOG_ERROR, "Extension \"%s\" not found\n", ext);
 	send_hangup(session_id);
 	return 0;
 }
@@ -291,7 +299,6 @@ static int remote_pickup(char *cmd, int argc, char **argv, unsigned char *data, 
 			ast_queue_control(vomp_state->owner, AST_CONTROL_ANSWER);
 			ret=1;
 		}
-		ao2_ref(vomp_state,-1);
 	}
 	return ret;
 }
@@ -307,7 +314,6 @@ static int remote_hangup(char *cmd, int argc, char **argv, unsigned char *data, 
 			ast_queue_hangup(vomp_state->owner);
 			ret=1;
 		}
-		ao2_ref(vomp_state,-1);
 	}
 	return ret;
 }
@@ -333,37 +339,35 @@ static int remote_audio(char *cmd, int argc, char **argv, unsigned char *data, i
 			
 			switch (codec){
 				case VOMP_CODEC_ULAW:
-					f.subclass.codec = AST_FORMAT_ULAW;
+					ast_format_set(&f.subclass.format, AST_FORMAT_ULAW, 0);
 					f.len = dataLen/8;
 					f.samples = dataLen;
 					break;
 				case VOMP_CODEC_ALAW:
-					f.subclass.codec = AST_FORMAT_ALAW;
+					ast_format_set(&f.subclass.format, AST_FORMAT_ALAW, 0);
 					f.len = dataLen/8;
 					f.samples = dataLen;
 					break;
 				case VOMP_CODEC_16SIGNED:
-					f.subclass.codec = AST_FORMAT_SLINEAR;
+					ast_format_set(&f.subclass.format, AST_FORMAT_SLINEAR16, 0);
 					f.len = dataLen/16;
 					f.samples = dataLen / sizeof(int16_t);
 					break;
 				case VOMP_CODEC_GSM:
-					f.subclass.codec = AST_FORMAT_GSM;
+					ast_format_set(&f.subclass.format, AST_FORMAT_GSM, 0);
 					break;
 				default:
 					return 0;
 			}
 			
-			if (f.subclass.codec != (vomp_state->owner->readformat & AST_FORMAT_AUDIO_MASK)){
-				vomp_state->owner->readformat=f.subclass.codec;
+			if (ast_format_cmp(&f.subclass.format, ast_channel_readformat(vomp_state->owner)) != AST_FORMAT_CMP_EQUAL){
 				// force audio transcoding paths to be rebuilt (I think...)
-				ast_set_read_format(vomp_state->owner, vomp_state->owner->readformat);
+				ast_set_read_format(vomp_state->owner, &f.subclass.format);
 			}
 			
 			ast_queue_frame(vomp_state->owner, &f);
 			ret=1;
 		}
-		ao2_ref(vomp_state,-1);
 	}
 	return ret;
 }
@@ -372,27 +376,34 @@ static int remote_codecs(char *cmd, int argc, char **argv, unsigned char *data, 
 	struct vomp_channel *vomp_state=get_channel(argv[0]);
 	if (vomp_state){
 		int i;
-		int codec_mask=0;
-		for (i=1;i<argc;i++){
-			int codec = atoi(argv[i]);
-			switch(codec){
-				case VOMP_CODEC_ULAW:
-					codec_mask|=AST_FORMAT_ULAW;
-					break;
-				case VOMP_CODEC_ALAW:
-					codec_mask|=AST_FORMAT_ALAW;
-					break;
-				case VOMP_CODEC_16SIGNED:
-					codec_mask|=AST_FORMAT_SLINEAR;
-					break;
-				case VOMP_CODEC_GSM:
-					codec_mask|=AST_FORMAT_GSM;
-					break;
+		struct ast_format_cap *cap = ast_format_cap_alloc(); // TODO AST_FORMAT_CAP_FLAG_DEFAULT
+		if (cap){
+			struct ast_format tmpfmt;
+			for (i=1;i<argc;i++){
+				int codec = atoi(argv[i]);
+				switch(codec){
+					case VOMP_CODEC_ULAW:
+						ast_format_set(&tmpfmt, AST_FORMAT_ULAW, 0);
+						break;
+					case VOMP_CODEC_ALAW:
+						ast_format_set(&tmpfmt, AST_FORMAT_ALAW, 0);
+						break;
+					case VOMP_CODEC_16SIGNED:
+						ast_format_set(&tmpfmt, AST_FORMAT_SLINEAR16, 0);
+						break;
+					case VOMP_CODEC_GSM:
+						ast_format_set(&tmpfmt, AST_FORMAT_GSM, 0);
+						break;
+					default:
+						continue;
+				}
+				ast_format_cap_add(cap, &tmpfmt);
 			}
+			ast_channel_nativeformats_set(vomp_state->owner, cap);
+			ast_best_codec(cap, &tmpfmt);
+			ast_set_write_format(vomp_state->owner, &tmpfmt);
 		}
-		vomp_state->owner->nativeformats = codec_mask;
-		ast_set_write_format(vomp_state->owner, ast_best_codec(codec_mask));
-	}	
+	}
 	return 1;
 }
 
@@ -407,7 +418,6 @@ static int remote_ringing(char *cmd, int argc, char **argv, unsigned char *data,
 			ast_queue_control(vomp_state->owner, AST_CONTROL_RINGING);
 			ret=1;
 		}
-		ao2_ref(vomp_state,-1);
 	}
 	return ret;
 }
@@ -461,27 +471,27 @@ static void *vomp_monitor(void *ignored){
 // functions for handling incoming asterisk events
 
 // create a channel for a new outgoing call
-static struct ast_channel *vomp_request(const char *type, format_t format, const struct ast_channel *requestor, void *dest_, int *cause){
-	// assume dest = servald subscriber id (sid)
-	// TODO parse dest = sid/did
-	char sid[64], *dest = dest_, did[64];
+static struct ast_channel  *vomp_request(const char *type, struct ast_format_cap *cap, 
+  const struct ast_channel *requestor, const char *addr, int *cause){
+	// assume addr = servald subscriber id (sid)
+	char sid[64], did[64];
 	int i=0;
-	for (;i<sizeof(sid) && dest[i] && dest[i]!='/';i++)
-		sid[i]=dest[i];
+	for (;i<sizeof(sid) && addr[i] && addr[i]!='/';i++)
+		sid[i]=addr[i];
 	
 	sid[i]=0;
 	
 	// copy the phone number from the last path segment
-	dest+=i;
+	addr+=i;
 	i=0;
-	if (*dest++){
-		for (;i<sizeof(did) && dest[i];i++){
-			if (dest[i]=='/'){
+	if (*addr++){
+		for (;i<sizeof(did) && addr[i];i++){
+			if (addr[i]=='/'){
 				// start copying again from the beginning
-				dest+=i+1;
+				addr+=i+1;
 				i=-1;
 			}else{
-				did[i]=dest[i];
+				did[i]=addr[i];
 			}
 		}
 	}
@@ -489,6 +499,11 @@ static struct ast_channel *vomp_request(const char *type, format_t format, const
 	
 	ast_log(LOG_WARNING, "vomp_request %s/%s\n", type, sid);
 	struct vomp_channel *vomp_state=new_vomp_channel();
+	
+	// TODO?
+	//struct ast_callid *callid = ast_read_threadstorage_callid();
+	//ast_format_cap_append_from_cap(p->prefcaps, cap, AST_MEDIA_TYPE_UNKNOWN);
+	//ast_format_cap_get_compatible(cap, p->caps, p->jointcaps);
 	
 	vomp_state->initiated=1;
 	struct ast_channel *ast = new_channel(vomp_state, AST_STATE_DOWN, NULL, NULL);
@@ -501,30 +516,33 @@ static struct ast_channel *vomp_request(const char *type, format_t format, const
 }
 
 static int vomp_hangup(struct ast_channel *ast){
-	ast_log(LOG_WARNING, "vomp_hangup %s\n", ast->name);
+	ast_log(LOG_WARNING, "vomp_hangup %s\n", ast_channel_name(ast));
 	
-	struct vomp_channel *vomp_state = (struct vomp_channel *)ast->tech_pvt;
+	struct vomp_channel *vomp_state = ast_channel_tech_pvt(ast);
+	ao2_lock(vomp_state);
 	
 	send_hangup(vomp_state->session_id);
 	ao2_unlink(channels, vomp_state);
-	ao2_ref(vomp_state,-1);
-	ast->tech_pvt = NULL;
+	ast_channel_tech_set(ast, NULL);
+	ast_channel_tech_pvt_set(ast, NULL);
+	vomp_state->owner = NULL;
+	ao2_unlock(vomp_state);
 	return 0;
 }
 
 static int vomp_fixup(struct ast_channel *oldchan, struct ast_channel *newchan){
-	struct vomp_channel *vomp_state = newchan->tech_pvt;
-	ast_log(LOG_WARNING, "vomp_fixup %s %s\n", oldchan->name, newchan->name);
+	struct vomp_channel *vomp_state = ast_channel_tech_pvt(newchan);
+	ast_log(LOG_WARNING, "vomp_fixup %s %s\n", ast_channel_name(oldchan), ast_channel_name(newchan));
 	vomp_state->owner = newchan;
 	return 0;
 }
 
 static int vomp_indicate(struct ast_channel *ast, int ind, const void *data, size_t datalen){
 	ast_log(LOG_WARNING, "vomp_indicate %d condition on channel %s\n", 
-			ind, ast->name);
+			ind, ast_channel_name(ast));
 	// return -1 and asterisk will generate audible tones.
 	
-	struct vomp_channel *vomp_state = ast->tech_pvt;
+	struct vomp_channel *vomp_state = ast_channel_tech_pvt(ast);
 	switch(ind){
 		case AST_CONTROL_PROGRESS:
 		case AST_CONTROL_RINGING:
@@ -543,17 +561,17 @@ static int vomp_indicate(struct ast_channel *ast, int ind, const void *data, siz
 	return 0;
 }
 
-static int vomp_call(struct ast_channel *ast, char *dest, int timeout){
+static int vomp_call(struct ast_channel *ast, const char *dest, int timeout){
 	// NOOP, as we have already started the call in vomp_request
-	ast_log(LOG_WARNING, "vomp_call %s %s\n", ast->name, dest);
+	ast_log(LOG_WARNING, "vomp_call %s %s\n", ast_channel_name(ast), dest);
 	
 	return 0;
 }
 
 static int vomp_answer(struct ast_channel *ast){
-	ast_log(LOG_WARNING, "vomp_answer %s\n", ast->name);
+	ast_log(LOG_WARNING, "vomp_answer %s\n", ast_channel_name(ast));
 	
-	struct vomp_channel *vomp_state = ast->tech_pvt;
+	struct vomp_channel *vomp_state = ast_channel_tech_pvt(ast);
 	
 	vomp_state->call_start = gettime_ms();
 	ast_setstate(ast, AST_STATE_UP);
@@ -564,41 +582,47 @@ static int vomp_answer(struct ast_channel *ast){
 static struct ast_frame *vomp_read(struct ast_channel *ast){
 	// this method should only be called if we told asterisk to monitor a file for us.
 	
-	ast_log(LOG_WARNING, "vomp_read %s - this shouldn't happen\n", ast->name);
+	ast_log(LOG_WARNING, "vomp_read %s - this shouldn't happen\n", ast_channel_name(ast));
 	
 	return &ast_null_frame;
 }
 
 static int vomp_write(struct ast_channel *ast, struct ast_frame *frame){
-	struct vomp_channel *vomp_state = ast->tech_pvt;
-	if (vomp_state){
-		int codec, time=-1, sequence=-1;
-		switch (frame->subclass.codec){
-			case AST_FORMAT_ULAW:
-				codec = VOMP_CODEC_ULAW;
-				break;
-			case AST_FORMAT_ALAW:
-				codec = VOMP_CODEC_ALAW;
-				break;
-			case AST_FORMAT_SLINEAR:
-				codec = VOMP_CODEC_16SIGNED;
-				break;
-			default:
-				return 0;
-		}
-		
-		if (frame->flags & AST_FRFLAG_HAS_TIMING_INFO){
-			time=frame->ts;
-			sequence=frame->seqno;
-		}
+	struct vomp_channel *vomp_state = ast_channel_tech_pvt(ast);
+	if (!vomp_state)
+		return 0;
+	switch (frame->frametype){
+		case AST_FRAME_VOICE:{
+			int audio_codec, audio_time=-1, audio_sequence=-1;
+			switch (frame->subclass.format.id){
+				case AST_FORMAT_ULAW:
+					audio_codec = VOMP_CODEC_ULAW;
+					break;
+				case AST_FORMAT_ALAW:
+					audio_codec = VOMP_CODEC_ALAW;
+					break;
+				case AST_FORMAT_SLINEAR:
+					audio_codec = VOMP_CODEC_16SIGNED;
+					break;
+				case AST_FORMAT_GSM:
+					audio_codec = VOMP_CODEC_GSM;
+					break;
+				default:
+					return 0;
+			}
 			
-	  
-		send_audio(vomp_state, frame->data.ptr, frame->datalen, codec, time, sequence);
+			if (frame->flags & AST_FRFLAG_HAS_TIMING_INFO){
+				audio_time=frame->ts;
+				audio_sequence=frame->seqno;
+			}
+			
+			send_audio(vomp_state, frame->data.ptr, frame->datalen, audio_codec, audio_time, audio_sequence);
+		break;}
+		default:
+			break;
 	}
 	return 0;
 }
-
-// module load / unload
 
 static int vomp_hash(const void *obj, const int flags){
 	const struct vomp_channel *vomp_state = obj;
@@ -611,11 +635,23 @@ static int vomp_compare(void *obj, void *arg, int flags){
 	return obj1->session_id==obj2->session_id ? CMP_MATCH | CMP_STOP : 0;
 }
 
+// module load / unload
 int vomp_register_channel(void){
 	ast_log(LOG_WARNING, "Registering Serval channel driver\n");
+	vomp_tech.capabilities = ast_format_cap_alloc();// TODO AST_FORMAT_CAP_FLAG_DEFAULT
+	if (!vomp_tech.capabilities)
+		return AST_MODULE_LOAD_FAILURE;
+	
+	struct ast_format tmpfmt;
+	
+	ast_format_cap_add(vomp_tech.capabilities, ast_format_set(&tmpfmt, AST_FORMAT_ULAW, 0));
+	ast_format_cap_add(vomp_tech.capabilities, ast_format_set(&tmpfmt, AST_FORMAT_ALAW, 0));
+	ast_format_cap_add(vomp_tech.capabilities, ast_format_set(&tmpfmt, AST_FORMAT_SLINEAR16, 0));
+	ast_format_cap_add(vomp_tech.capabilities, ast_format_set(&tmpfmt, AST_FORMAT_GSM, 0));
 	
 	if (ast_channel_register(&vomp_tech)) {
-		ast_log(LOG_ERROR, "Unable to register channel class %s\n", type);
+		ao2_cleanup(vomp_tech.capabilities);
+		ast_log(LOG_ERROR, "Unable to register channel class %s\n", vomp_tech.type);
 		return AST_MODULE_LOAD_FAILURE;
 	}
 	
@@ -638,8 +674,10 @@ int vomp_unregister_channel(void){
 	pthread_join(thread, NULL);
 	
 	ast_channel_unregister(&vomp_tech);
+	ao2_cleanup(vomp_tech.capabilities);
+	vomp_tech.capabilities = NULL;
 	ao2_ref(channels, -1);
-	
+	channels = NULL;
 	ast_log(LOG_WARNING, "Done\n");
 	return 0;
 }

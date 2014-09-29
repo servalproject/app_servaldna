@@ -1,4 +1,3 @@
-AST_ROOT=	../asterisk-1.8.14.1
 SERVAL_ROOT=	../batphone/jni/serval-dna
 
 NAME=	app_servaldna
@@ -10,9 +9,7 @@ HDRS=	app.h
 
 OBJS=	$(SRCS:.c=.o)
 
-include $(AST_ROOT)/makeopts
-
-CC=	cc
+CC=	gcc
 RM=	rm
 
 # Voodoo from Asterisk 1.8.14.1 Makefile for OSX
@@ -32,8 +29,8 @@ endif
 # So we get PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP on Ubuntu
 CFLAGS+=-DPTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP
 
-CFLAGS+=	-DAST_MODULE=\"$(NAME)\" -I$(AST_ROOT)/include -I$(SERVAL_ROOT) -I$(SERVAL_ROOT)/nacl/include -fPIC $(PTHREAD_CFLAGS)
-CFLAGS+=	-Wall -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -g
+CFLAGS+=	-DAST_MODULE=\"$(NAME)\" -I$(SERVAL_ROOT) -I$(SERVAL_ROOT)/nacl/include -fPIC $(PTHREAD_CFLAGS)
+CFLAGS+=	-Wall -g
 # Work around AST_INLINE_API weirdness on OSX 10.8
 CFLAGS+=	-DLOW_MEMORY
 LDFLAGS+=	$(SERVAL_ROOT)/libmonitorclient.a
